@@ -9,6 +9,28 @@ function OrganizerView({ socket, gameState, standings, roomId, roomName, onBackT
   const [showSettings, setShowSettings] = useState(false);
   const [editingQuestionId, setEditingQuestionId] = useState(null);
 
+  // Auction specific states
+  const [showAddAuctionQuestion, setShowAddAuctionQuestion] = useState(false);
+  const [showAddOpenQuestion, setShowAddOpenQuestion] = useState(false);
+  
+  // Form states for Auction Question
+  const [aqText, setAqText] = useState('');
+  const [aqDiff, setAqDiff] = useState('MEDIUM');
+  const [aqCorrect, setAqCorrect] = useState('');
+  const [aqImg, setAqImg] = useState(null);
+  const [aqImgName, setAqImgName] = useState('');
+  const [aqAlign, setAqAlign] = useState('TOP');
+  const [editingAqId, setEditingAqId] = useState(null);
+
+  // Form states for Open Question
+  const [oqText, setOqText] = useState('');
+  const [oqA, setOqA] = useState('');
+  const [oqB, setOqB] = useState('');
+  const [oqC, setOqC] = useState('');
+  const [oqD, setOqD] = useState('');
+  const [oqCorrect, setOqCorrect] = useState('A');
+  const [editingOqId, setEditingOqId] = useState(null);
+
   // Forms
   const [newQuestionText, setNewQuestionText] = useState('');
   const [newQuestionDifficulty, setNewQuestionDifficulty] = useState('MEDIUM');
@@ -230,6 +252,586 @@ function OrganizerView({ socket, gameState, standings, roomId, roomName, onBackT
       }
     });
   };
+
+  const renderAuctionMode = () => {
+    const activeQuestion = gameState.activeQuestion;
+    const currentPrice = gameState.currentBid || 10;
+    const isAnswering = gameState.gameState === 'AUCTION_ANSWERING' || gameState.gameState === 'AUCTION_ANSWERED';
+    const sortedStandings = [...standings].sort((a, b) => b.fanTokens - a.fanTokens);
+
+    const handleStartAuction = (qId) => {
+      socket.emit('admin-start-auction', { roomId, questionId: qId }, (res) => {
+        if (!res.success) alert(res.error);
+      });
+    };
+
+    const handleCloseBidding = () => {
+      socket.emit('admin-close-bidding', { roomId }, (res) => {
+        if (!res.success) alert(res.error);
+      });
+    };
+
+    const handleRevealAuctionResults = (isCorrectOverride) => {
+      socket.emit('admin-reveal-auction-results', { roomId, isCorrectOverride }, (res) => {
+        if (!res.success) alert(res.error);
+      });
+    };
+
+    const handleNextAuctionMatch = () => {
+      socket.emit('admin-next-auction-match', { roomId }, (res) => {
+        if (!res.success) alert(res.error);
+      });
+    };
+
+    const handleLaunchOpenQuestion = (qId) => {
+      socket.emit('admin-launch-open-question', { roomId, questionId: qId }, (res) => {
+        if (!res.success) alert(res.error);
+      });
+    };
+
+    const handleRevealOpenResults = () => {
+      socket.emit('admin-reveal-open-results', { roomId }, (res) => {
+        if (!res.success) alert(res.error);
+      });
+    };
+
+    // CRUD Auction Questions
+    const saveAuctionQuestion = async (e) => {
+      e.preventDefault();
+      if (!aqText.trim() || !aqCorrect.trim()) return;
+
+      let uploadedUrl = null;
+      if (aqImg) {
+        // Upload image if selected
+        const uploadRes = await fetch('/api/upload', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ imageBase64: aqImg, filename: aqImgName })
+        });
+        const uploadData = await uploadRes.json();
+        if (uploadData.success) {
+          uploadedUrl = uploadData.url;
+        } else {
+          alert('Failed to upload image.');
+          return;
+        }
+      }
+
+      let updatedQuestions = [...(gameState.questions || [])];
+      const newQ = {
+        id: editingAqId || 'aq-' + Date.now(),
+        text: aqText.trim(),
+        difficulty: aqDiff,
+        correctAnswer: aqCorrect.trim(),
+        imageUrl: uploadedUrl || (editingAqId ? updatedQuestions.find(q => q.id === editingAqId)?.imageUrl : null),
+        imageAlign: aqAlign,
+        isPlayed: false
+      };
+
+      if (editingAqId) {
+        updatedQuestions = updatedQuestions.map(q => q.id === editingAqId ? newQ : q);
+      } else {
+        updatedQuestions.push(newQ);
+      }
+
+      socket.emit('admin-update-questions', { roomId, questions: updatedQuestions }, (res) => {
+        if (res.success) {
+          setShowAddAuctionQuestion(false);
+          setAqText('');
+          setAqCorrect('');
+          setAqImg(null);
+          setAqImgName('');
+          setEditingAqId(null);
+        } else {
+          alert(res.error || 'Failed to update auction questions.');
+        }
+      });
+    };
+
+    const deleteAuctionQuestion = (qId) => {
+      if (!window.confirm('Delete this auction question?')) return;
+      const updated = (gameState.questions || []).filter(q => q.id !== qId);
+      socket.emit('admin-update-questions', { roomId, questions: updated });
+    };
+
+    const editAuctionQuestion = (q) => {
+      setEditingAqId(q.id);
+      setAqText(q.text);
+      setAqDiff(q.difficulty);
+      setAqCorrect(q.correctAnswer);
+      setAqAlign(q.imageAlign || 'TOP');
+      setAqImg(null);
+      setAqImgName('');
+      setShowAddAuctionQuestion(true);
+    };
+
+    // CRUD Open Questions
+    const saveOpenQuestion = (e) => {
+      e.preventDefault();
+      if (!oqText.trim() || !oqA.trim() || !oqB.trim() || !oqC.trim() || !oqD.trim()) return;
+
+      let updated = [...(gameState.openQuestions || [])];
+      const newQ = {
+        id: editingOqId || 'oq-' + Date.now(),
+        text: oqText.trim(),
+        options: [oqA.trim(), oqB.trim(), oqC.trim(), oqD.trim()],
+        correctAnswer: oqCorrect,
+        isPlayed: false
+      };
+
+      if (editingOqId) {
+        updated = updated.map(q => q.id === editingOqId ? newQ : q);
+      } else {
+        updated.push(newQ);
+      }
+
+      socket.emit('admin-update-open-questions', { roomId, openQuestions: updated }, (res) => {
+        if (res.success) {
+          setShowAddOpenQuestion(false);
+          setOqText('');
+          setOqA('');
+          setOqB('');
+          setOqC('');
+          setOqD('');
+          setOqCorrect('A');
+          setEditingOqId(null);
+        } else {
+          alert(res.error || 'Failed to update open questions.');
+        }
+      });
+    };
+
+    const deleteOpenQuestion = (qId) => {
+      if (!window.confirm('Delete this open question?')) return;
+      const updated = (gameState.openQuestions || []).filter(q => q.id !== qId);
+      socket.emit('admin-update-open-questions', { roomId, openQuestions: updated });
+    };
+
+    const editOpenQuestion = (q) => {
+      setEditingOqId(q.id);
+      setOqText(q.text);
+      setOqA(q.options[0] || '');
+      setOqB(q.options[1] || '');
+      setOqC(q.options[2] || '');
+      setOqD(q.options[3] || '');
+      setOqCorrect(q.correctAnswer);
+      setShowAddOpenQuestion(true);
+    };
+
+    // Reset game handler
+    const triggerReset = () => {
+      if (window.confirm('WARNING: This wipes all registered Teams and resets standings. Proceed?')) {
+        socket.emit('admin-reset-game', { roomId });
+      }
+    };
+
+    return (
+      <div className="app-container" style={{ maxWidth: '1200px', padding: '20px' }}>
+        
+        {/* Header HUD */}
+        <header className="glass-panel" style={{ padding: '15px 25px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '25px', borderTop: '3px solid #f59e0b' }}>
+          <div style={{ display: 'flex', gap: '15px', alignItems: 'center' }}>
+            <span style={{ fontSize: '28px' }}>🔨</span>
+            <div>
+              <h1 style={{ fontSize: '20px', fontWeight: '950', textTransform: 'uppercase' }}>Auction Organizer Control</h1>
+              <span style={{ fontSize: '11px', color: '#f59e0b', fontWeight: 'bold' }}>{roomName} • PIN: {gameState.pin || '1127'}</span>
+            </div>
+          </div>
+
+          <div style={{ display: 'flex', gap: '10px' }}>
+            <button className="btn-secondary" style={{ padding: '8px 15px', fontSize: '12px' }} onClick={triggerReset}>
+              <RefreshCw size={14} /> Full Reset
+            </button>
+            <button className="btn-secondary" style={{ padding: '8px 15px', fontSize: '12px' }} onClick={onBackToHub}>
+              <ArrowLeft size={14} /> Return to Hub
+            </button>
+          </div>
+        </header>
+
+        {/* Dashboard Cards */}
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '20px', marginBottom: '25px' }}>
+          <div className="glass-panel" style={{ padding: '15px 20px', textAlign: 'center' }}>
+            <div style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>TOTAL TEAMS</div>
+            <div style={{ fontSize: '32px', fontWeight: '950', color: '#fff', marginTop: '5px' }}>{totalPlayers}</div>
+          </div>
+          <div className="glass-panel" style={{ padding: '15px 20px', textAlign: 'center' }}>
+            <div style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>TOTAL TOKENS</div>
+            <div style={{ fontSize: '32px', fontWeight: '950', color: '#f59e0b', marginTop: '5px' }}>{totalTokens} 🪙</div>
+          </div>
+          <div className="glass-panel" style={{ padding: '15px 20px', textAlign: 'center' }}>
+            <div style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>ACTIVE GAME STATE</div>
+            <div style={{ fontSize: '16px', fontWeight: '950', color: 'var(--pitch-accent)', marginTop: '12px', textTransform: 'uppercase' }}>
+              {gameState.gameState}
+            </div>
+          </div>
+        </div>
+
+        {/* Main Interface Layout */}
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 350px', gap: '25px' }}>
+          
+          {/* Left panel: round control & question lists */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '25px' }}>
+            
+            {/* Active Control Panel */}
+            <div className="glass-panel" style={{ padding: '25px', border: '1px solid rgba(245, 158, 11, 0.2)' }}>
+              <h2 style={{ fontSize: '16px', fontWeight: '800', marginBottom: '15px', color: '#f59e0b', textTransform: 'uppercase' }}>
+                Active Round Operations
+              </h2>
+
+              {gameState.gameState === 'LOBBY' && (
+                <div style={{ padding: '15px', textAlign: 'center', background: 'rgba(255,255,255,0.02)', borderRadius: '8px', color: 'var(--text-secondary)', fontSize: '13px' }}>
+                  No active match. Launch an Auction or Open Question from the rosters below.
+                </div>
+              )}
+
+              {gameState.gameState === 'AUCTION_DROPPING' && (
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'rgba(255, 179, 0, 0.05)', padding: '15px', borderRadius: '8px', border: '1px solid rgba(255, 179, 0, 0.2)' }}>
+                  <div>
+                    <strong style={{ display: 'block', fontSize: '14px' }}>Bidding Active: {activeQuestion?.difficulty} Question</strong>
+                    <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>Current Price: {currentPrice} tokens</span>
+                  </div>
+                  <button className="btn-secondary" style={{ borderColor: 'var(--red-card)', color: 'var(--red-card)' }} onClick={handleCloseBidding}>
+                    Close/Skip Round
+                  </button>
+                </div>
+              )}
+
+              {isAnswering && (
+                <div style={{ background: 'rgba(255,255,255,0.03)', padding: '20px', borderRadius: '12px', border: '1px solid var(--glass-border)' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '15px' }}>
+                    <div>
+                      <strong style={{ fontSize: '15px', display: 'block' }}>
+                        Winning Team: {standings.find(p => p.id === gameState.auctionWinner)?.name || 'Unknown'}
+                      </strong>
+                      <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
+                        Bought at {currentPrice} tokens • Status: {gameState.gameState === 'AUCTION_ANSWERED' ? 'Answer Locked In 🔒' : 'Thinking... ⏳'}
+                      </span>
+                    </div>
+                  </div>
+
+                  <div style={{ background: 'rgba(0,0,0,0.2)', padding: '12px', borderRadius: '8px', marginBottom: '15px', fontSize: '13px' }}>
+                    <div><strong>Question:</strong> {activeQuestion?.text}</div>
+                    <div style={{ marginTop: '5px' }}><strong>Correct Answer:</strong> {activeQuestion?.correctAnswer}</div>
+                    <div style={{ marginTop: '5px', color: '#ffb300' }}>
+                      <strong>Submitted Answer:</strong> {gameState.gameState === 'AUCTION_ANSWERED' ? `"${Object.values(gameState.submissions)[0]?.answer}"` : 'Waiting for team...'}
+                    </div>
+                  </div>
+
+                  <div style={{ display: 'flex', gap: '10px' }}>
+                    <button className="btn-primary" style={{ flex: 1, background: 'var(--pitch-accent)', color: '#07170f' }} onClick={() => handleRevealAuctionResults(true)}>
+                      Verify VAR (CORRECT 👍)
+                    </button>
+                    <button className="btn-secondary" style={{ flex: 1, borderColor: 'var(--red-card)', color: 'var(--red-card)' }} onClick={() => handleRevealAuctionResults(false)}>
+                      Verify VAR (INCORRECT 👎)
+                    </button>
+                    <button className="btn-secondary" style={{ flex: 1 }} onClick={() => handleRevealAuctionResults(null)}>
+                      Auto Grade
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {gameState.gameState === 'AUCTION_REVEAL' && (
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'rgba(0, 230, 118, 0.05)', padding: '15px', borderRadius: '8px', border: '1px solid var(--pitch-accent-glow)' }}>
+                  <div>
+                    <strong style={{ display: 'block', fontSize: '14px' }}>Reveal Active: Results displayed</strong>
+                    <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>Click next to clean up the lobby.</span>
+                  </div>
+                  <button className="btn-primary" onClick={handleNextAuctionMatch}>
+                    Next / Back to Lobby
+                  </button>
+                </div>
+              )}
+
+              {gameState.gameState === 'OPEN_QUESTION_ACTIVE' && (
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'rgba(0, 176, 255, 0.05)', padding: '15px', borderRadius: '8px', border: '1px solid rgba(0, 176, 255, 0.2)' }}>
+                  <div>
+                    <strong style={{ display: 'block', fontSize: '14px' }}>Open MCQ Round Active: {activeQuestion?.text}</strong>
+                    <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>Submissions: {gameState.submissionsCount} / {totalPlayers}</span>
+                  </div>
+                  <button className="btn-primary" style={{ background: '#00b0ff', color: 'black' }} onClick={handleRevealOpenResults}>
+                    Reveal Results
+                  </button>
+                </div>
+              )}
+
+              {gameState.gameState === 'OPEN_QUESTION_REVEAL' && (
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'rgba(0, 176, 255, 0.05)', padding: '15px', borderRadius: '8px', border: '1px solid rgba(0, 176, 255, 0.2)' }}>
+                  <div>
+                    <strong style={{ display: 'block', fontSize: '14px' }}>Open Round Results revealed</strong>
+                    <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>Click next to clean up the lobby.</span>
+                  </div>
+                  <button className="btn-primary" style={{ background: '#00b0ff', color: 'black' }} onClick={handleNextAuctionMatch}>
+                    Next / Back to Lobby
+                  </button>
+                </div>
+              )}
+
+            </div>
+
+            {/* Auction Question list */}
+            <div className="glass-panel" style={{ padding: '25px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px', borderBottom: '1px solid var(--glass-border)', paddingBottom: '10px' }}>
+                <h3 style={{ fontSize: '16px', fontWeight: '800' }}>🔨 DUTCH AUCTION ROSTER</h3>
+                <button className="btn-secondary" style={{ padding: '6px 12px', fontSize: '11px', display: 'flex', alignItems: 'center', gap: '4px' }} onClick={() => { setEditingAqId(null); setAqText(''); setAqCorrect(''); setAqImg(null); setAqImgName(''); setShowAddAuctionQuestion(true); }}>
+                  <Plus size={12} /> Add Custom Question
+                </button>
+              </div>
+
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                {(gameState.questions || []).map((q, idx) => (
+                  <div key={q.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px', background: 'rgba(0,0,0,0.15)', borderRadius: '8px', border: '1px solid var(--glass-border)' }}>
+                    <div style={{ flex: 1, marginRight: '15px' }}>
+                      <div style={{ display: 'flex', gap: '8px', alignItems: 'center', marginBottom: '4px' }}>
+                        <span style={{ fontSize: '10px', background: 'rgba(255,255,255,0.05)', color: 'var(--text-secondary)', padding: '2px 6px', borderRadius: '4px', fontWeight: 'bold' }}>
+                          MATCH {idx + 1}
+                        </span>
+                        <span style={{
+                          fontSize: '10px',
+                          padding: '2px 6px',
+                          borderRadius: '4px',
+                          fontWeight: 'bold',
+                          color: q.difficulty === 'EASY' ? '#00e676' : q.difficulty === 'MEDIUM' ? '#ffb300' : '#ff1744',
+                          background: q.difficulty === 'EASY' ? 'rgba(0, 230, 118, 0.05)' : q.difficulty === 'MEDIUM' ? 'rgba(255, 179, 0, 0.05)' : 'rgba(255, 23, 68, 0.05)'
+                        }}>
+                          {q.difficulty}
+                        </span>
+                      </div>
+                      <strong style={{ fontSize: '13px', display: 'block', color: '#fff' }}>{q.text}</strong>
+                      <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Correct Answer: {q.correctAnswer}</span>
+                    </div>
+
+                    <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                      <button className="btn-secondary" style={{ padding: '6px' }} onClick={() => editAuctionQuestion(q)}>
+                        <Edit size={12} />
+                      </button>
+                      <button className="btn-secondary" style={{ padding: '6px', borderColor: 'rgba(255,23,68,0.2)' }} onClick={() => deleteAuctionQuestion(q.id)}>
+                        <Trash2 size={12} className="red-card" />
+                      </button>
+                      {q.isPlayed ? (
+                        <span style={{ fontSize: '11px', background: 'rgba(255,255,255,0.03)', color: 'var(--text-muted)', padding: '6px 12px', borderRadius: '4px', border: '1px solid rgba(255,255,255,0.05)' }}>
+                          PLAYED 🔒
+                        </span>
+                      ) : (
+                        <button className="btn-primary" style={{ padding: '6px 12px', fontSize: '11px', background: 'linear-gradient(135deg, #f59e0b 0%, #ff5252 100%)', color: '#170c00' }} onClick={() => handleStartAuction(q.id)}>
+                          LAUNCH DROP 🔨
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                ))}
+                {(gameState.questions || []).length === 0 && (
+                  <div style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '20px 0', fontSize: '13px' }}>
+                    No auction questions preloaded. Click Add Custom Question to start.
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Open Questions List */}
+            <div className="glass-panel" style={{ padding: '25px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px', borderBottom: '1px solid var(--glass-border)', paddingBottom: '10px' }}>
+                <h3 style={{ fontSize: '16px', fontWeight: '800' }}>📢 OPEN QUESTIONS ROSTER</h3>
+                <button className="btn-secondary" style={{ padding: '6px 12px', fontSize: '11px', display: 'flex', alignItems: 'center', gap: '4px' }} onClick={() => { setEditingOqId(null); setOqText(''); setOqA(''); setOqB(''); setOqC(''); setOqD(''); setOqCorrect('A'); setShowAddOpenQuestion(true); }}>
+                  <Plus size={12} /> Add MCQ
+                </button>
+              </div>
+
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                {(gameState.openQuestions || []).map((q, idx) => (
+                  <div key={q.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px', background: 'rgba(0,0,0,0.15)', borderRadius: '8px', border: '1px solid var(--glass-border)' }}>
+                    <div style={{ flex: 1, marginRight: '15px' }}>
+                      <div style={{ display: 'flex', gap: '8px', alignItems: 'center', marginBottom: '4px' }}>
+                        <span style={{ fontSize: '10px', background: 'rgba(255,255,255,0.05)', color: 'var(--text-secondary)', padding: '2px 6px', borderRadius: '4px', fontWeight: 'bold' }}>
+                          MCQ {idx + 1}
+                        </span>
+                      </div>
+                      <strong style={{ fontSize: '13px', display: 'block', color: '#fff' }}>{q.text}</strong>
+                      <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
+                        Options: {q.options.map((opt, i) => `${String.fromCharCode(65+i)}: ${opt}`).join(', ')} | Correct: {q.correctAnswer}
+                      </span>
+                    </div>
+
+                    <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                      <button className="btn-secondary" style={{ padding: '6px' }} onClick={() => editOpenQuestion(q)}>
+                        <Edit size={12} />
+                      </button>
+                      <button className="btn-secondary" style={{ padding: '6px', borderColor: 'rgba(255,23,68,0.2)' }} onClick={() => deleteOpenQuestion(q.id)}>
+                        <Trash2 size={12} className="red-card" />
+                      </button>
+                      {q.isPlayed ? (
+                        <span style={{ fontSize: '11px', background: 'rgba(255,255,255,0.03)', color: 'var(--text-muted)', padding: '6px 12px', borderRadius: '4px', border: '1px solid rgba(255,255,255,0.05)' }}>
+                          PLAYED 🔒
+                        </span>
+                      ) : (
+                        <button className="btn-primary" style={{ padding: '6px 12px', fontSize: '11px', background: '#00b0ff', color: 'black' }} onClick={() => handleLaunchOpenQuestion(q.id)}>
+                          LAUNCH MCQ 📢
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+          </div>
+
+          {/* Right panel: team standings & token controls */}
+          <div>
+            <div className="glass-panel" style={{ padding: '20px', display: 'flex', flexDirection: 'column', gap: '15px' }}>
+              <h3 style={{ fontSize: '16px', fontWeight: '800', borderBottom: '1px solid var(--glass-border)', paddingBottom: '10px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <Users size={16} /> TEAMS STANDINGS
+              </h3>
+
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '700px', overflowY: 'auto' }}>
+                {sortedStandings.map((p, idx) => (
+                  <div key={p.id} style={{ padding: '10px', background: 'rgba(0,0,0,0.15)', border: '1px solid var(--glass-border)', borderRadius: '8px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <div>
+                      <strong style={{ fontSize: '13px', display: 'block' }}>{p.name}</strong>
+                      <span className="gold-token" style={{ fontSize: '12px', fontWeight: 'bold' }}>{p.fanTokens} 🪙</span>
+                    </div>
+
+                    <div style={{ display: 'flex', gap: '4px' }}>
+                      <button className="btn-secondary" style={{ padding: '4px 8px', fontSize: '11px' }} onClick={() => socket.emit('admin-adjust-tokens', { roomId, playerId: p.id, amount: 5 })}>
+                        +5
+                      </button>
+                      <button className="btn-secondary" style={{ padding: '4px 8px', fontSize: '11px' }} onClick={() => socket.emit('admin-adjust-tokens', { roomId, playerId: p.id, amount: -5 })}>
+                        -5
+                      </button>
+                      <button className="btn-secondary" style={{ padding: '4px 8px', borderColor: 'rgba(255,23,68,0.2)' }} onClick={() => socket.emit('admin-kick-player', { roomId, playerId: p.id })}>
+                        <UserMinus size={12} className="red-card" />
+                      </button>
+                    </div>
+                  </div>
+                ))}
+                {sortedStandings.length === 0 && (
+                  <div style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '20px 0', fontSize: '12px' }}>
+                    No teams connected yet.
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+
+        </div>
+
+        {/* MODAL: ADD/EDIT AUCTION QUESTION */}
+        {showAddAuctionQuestion && (
+          <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.85)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 10000 }}>
+            <div className="glass-panel" style={{ padding: '30px', maxWidth: '500px', width: '90%', maxHeight: '95vh', overflowY: 'auto' }}>
+              <h3 style={{ fontSize: '18px', fontWeight: '800', marginBottom: '15px' }}>
+                {editingAqId ? 'Edit Auction Question' : 'Add Auction Question'}
+              </h3>
+              <form onSubmit={saveAuctionQuestion} style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
+                <div>
+                  <label style={{ fontSize: '12px', display: 'block', marginBottom: '4px' }}>Question Text</label>
+                  <textarea className="text-input" style={{ minHeight: '80px', padding: '10px' }} value={aqText} onChange={(e) => setAqText(e.target.value)} required />
+                </div>
+                
+                <div>
+                  <label style={{ fontSize: '12px', display: 'block', marginBottom: '4px' }}>Difficulty</label>
+                  <select className="text-input" style={{ padding: '10px', background: 'var(--input-bg)', color: 'white' }} value={aqDiff} onChange={(e) => setAqDiff(e.target.value)}>
+                    <option value="EASY">🟢 EASY</option>
+                    <option value="MEDIUM">🟡 MEDIUM</option>
+                    <option value="HARD">🔴 HARD</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label style={{ fontSize: '12px', display: 'block', marginBottom: '4px' }}>Correct Answer String</label>
+                  <input type="text" className="text-input" style={{ padding: '10px' }} value={aqCorrect} onChange={(e) => setAqCorrect(e.target.value)} required placeholder="e.g. len or [1,2,3]" />
+                </div>
+
+                <div>
+                  <label style={{ fontSize: '12px', display: 'block', marginBottom: '4px' }}>Meme Image (Optional)</label>
+                  <input type="file" accept="image/*" onChange={(e) => {
+                    const file = e.target.files[0];
+                    if (file) {
+                      setAqImgName(file.name);
+                      const reader = new FileReader();
+                      reader.onloadend = () => setAqImg(reader.result);
+                      reader.readAsDataURL(file);
+                    }
+                  }} />
+                </div>
+
+                <div>
+                  <label style={{ fontSize: '12px', display: 'block', marginBottom: '4px' }}>Image Position</label>
+                  <select className="text-input" style={{ padding: '10px', background: 'var(--input-bg)', color: 'white' }} value={aqAlign} onChange={(e) => setAqAlign(e.target.value)}>
+                    <option value="TOP">Top</option>
+                    <option value="BOTTOM">Bottom</option>
+                    <option value="LEFT">Left</option>
+                    <option value="RIGHT">Right</option>
+                  </select>
+                </div>
+
+                <div style={{ display: 'flex', gap: '15px', justifyContent: 'flex-end', marginTop: '10px' }}>
+                  <button type="button" className="btn-secondary" onClick={() => setShowAddAuctionQuestion(false)}>Cancel</button>
+                  <button type="submit" className="btn-primary">Save Question</button>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
+
+        {/* MODAL: ADD/EDIT OPEN MCQ QUESTION */}
+        {showAddOpenQuestion && (
+          <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.85)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 10000 }}>
+            <div className="glass-panel" style={{ padding: '30px', maxWidth: '500px', width: '90%', maxHeight: '95vh', overflowY: 'auto' }}>
+              <h3 style={{ fontSize: '18px', fontWeight: '800', marginBottom: '15px' }}>
+                {editingOqId ? 'Edit MCQ Open Question' : 'Add MCQ Open Question'}
+              </h3>
+              <form onSubmit={saveOpenQuestion} style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
+                <div>
+                  <label style={{ fontSize: '12px', display: 'block', marginBottom: '4px' }}>Question Text</label>
+                  <textarea className="text-input" style={{ minHeight: '60px', padding: '10px' }} value={oqText} onChange={(e) => setOqText(e.target.value)} required />
+                </div>
+
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+                  <div>
+                    <label style={{ fontSize: '12px', display: 'block', marginBottom: '4px' }}>Option A</label>
+                    <input type="text" className="text-input" style={{ padding: '8px' }} value={oqA} onChange={(e) => setOqA(e.target.value)} required />
+                  </div>
+                  <div>
+                    <label style={{ fontSize: '12px', display: 'block', marginBottom: '4px' }}>Option B</label>
+                    <input type="text" className="text-input" style={{ padding: '8px' }} value={oqB} onChange={(e) => setOqB(e.target.value)} required />
+                  </div>
+                  <div>
+                    <label style={{ fontSize: '12px', display: 'block', marginBottom: '4px' }}>Option C</label>
+                    <input type="text" className="text-input" style={{ padding: '8px' }} value={oqC} onChange={(e) => setOqC(e.target.value)} required />
+                  </div>
+                  <div>
+                    <label style={{ fontSize: '12px', display: 'block', marginBottom: '4px' }}>Option D</label>
+                    <input type="text" className="text-input" style={{ padding: '8px' }} value={oqD} onChange={(e) => setOqD(e.target.value)} required />
+                  </div>
+                </div>
+
+                <div>
+                  <label style={{ fontSize: '12px', display: 'block', marginBottom: '4px' }}>Correct Option</label>
+                  <select className="text-input" style={{ padding: '10px', background: 'var(--input-bg)', color: 'white' }} value={oqCorrect} onChange={(e) => setOqCorrect(e.target.value)}>
+                    <option value="A">A</option>
+                    <option value="B">B</option>
+                    <option value="C">C</option>
+                    <option value="D">D</option>
+                  </select>
+                </div>
+
+                <div style={{ display: 'flex', gap: '15px', justifyContent: 'flex-end', marginTop: '10px' }}>
+                  <button type="button" className="btn-secondary" onClick={() => setShowAddOpenQuestion(false)}>Cancel</button>
+                  <button type="submit" className="btn-primary">Save MCQ</button>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
+
+      </div>
+    );
+  };
+
+  if (roomId === 'auction') {
+    return renderAuctionMode();
+  }
 
   return (
     <div className="app-container" style={{ maxWidth: '1400px' }}>
@@ -494,7 +1096,7 @@ function OrganizerView({ socket, gameState, standings, roomId, roomName, onBackT
           </div>
 
           <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '700px' }}>
-            {standings.map((p) => {
+            {[...standings].sort((a, b) => b.fanTokens - a.fanTokens).map((p) => {
               const accuracy = p.matchesPlayed > 0 ? Math.round((p.goals / p.matchesPlayed) * 100) : 0;
               const hasPredicted = gameState.submittedPlayerIds && gameState.submittedPlayerIds.includes(p.id);
 

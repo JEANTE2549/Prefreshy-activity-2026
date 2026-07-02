@@ -33,7 +33,9 @@ function ProjectorView({ socket, gameState, standings, roomId, roomName, adminMo
   }, []);
 
   // Filter out players who haven't completed any rounds from the main League Table
-  const activeStandings = standings.filter(p => p.matchesPlayed > 0);
+  const activeStandings = [...standings]
+    .filter(p => p.matchesPlayed > 0)
+    .sort((a, b) => b.fanTokens - a.fanTokens);
   
   // Leaderboard psychology: finding special achievements
   const onFirePlayers = standings.filter(p => p.currentStreak >= 3);
@@ -50,6 +52,351 @@ function ProjectorView({ socket, gameState, standings, roomId, roomName, adminMo
       }
     }
   });
+
+  const renderAuctionMode = () => {
+    const currentPrice = gameState.currentBid || 10;
+    const sortedActiveStandings = [...standings].sort((a, b) => b.fanTokens - a.fanTokens);
+    const activeQuestion = gameState.activeQuestion;
+    const isAnswering = gameState.gameState === 'AUCTION_ANSWERING' || gameState.gameState === 'AUCTION_ANSWERED';
+
+    return (
+      <div className="app-container" style={{ maxWidth: '1300px', padding: '20px', minHeight: '95vh', display: 'flex', flexDirection: 'column' }}>
+        
+        {/* Header HUD */}
+        <header className="glass-panel" style={{ padding: '15px 30px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '25px', borderTop: '3px solid #f59e0b' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '15px' }}>
+            <span style={{ fontSize: '32px' }}>🔨</span>
+            <div>
+              <h1 style={{ fontSize: '24px', fontWeight: '950', textTransform: 'uppercase', letterSpacing: '1px', color: '#fff' }}>
+                Python Dutch Auction
+              </h1>
+              <span style={{ fontSize: '12px', color: '#f59e0b', fontWeight: 'bold' }}>
+                {roomName} • PIN: {gameState.pin || '1127'}
+              </span>
+            </div>
+          </div>
+          
+          <div style={{ display: 'flex', gap: '15px', alignItems: 'center' }}>
+            {adminMode && (
+              <button className="btn-secondary" onClick={onBackToHub} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '8px 16px', fontSize: '13px' }}>
+                <ArrowLeft size={14} /> Back to Hub
+              </button>
+            )}
+            <span style={{ fontSize: '12px', background: 'rgba(255,255,255,0.05)', padding: '6px 15px', borderRadius: '20px', color: 'var(--text-secondary)' }}>
+              STADIUM SCREEN
+            </span>
+          </div>
+        </header>
+
+        {/* Main Grid */}
+        <div style={{ flex: 1, display: 'grid', gridTemplateColumns: '1fr 340px', gap: '25px' }}>
+          
+          {/* Left panel: active screen */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+            
+            {/* LOBBY STATE */}
+            {gameState.gameState === 'LOBBY' && (
+              <div className="glass-panel" style={{ flex: 1, display: 'flex', gap: '30px', padding: '40px', alignItems: 'center', justifyContent: 'center' }}>
+                <div style={{ flex: 1, textAlign: 'center' }}>
+                  <div style={{ fontSize: '64px', marginBottom: '20px', animation: 'bounce-ball 1.5s infinite ease-in-out' }}>🔨</div>
+                  <h2 style={{ fontSize: '32px', fontWeight: '950', color: '#fff', marginBottom: '15px' }}>
+                    JOIN THE AUCTION STADIUM
+                  </h2>
+                  <p style={{ color: 'var(--text-secondary)', fontSize: '16px', maxWidth: '400px', margin: '0 auto 25px auto', lineHeight: '1.6' }}>
+                    Scan the QR code or visit the website and enter the Game PIN to register your Team.
+                  </p>
+                  <div style={{ fontSize: '24px', fontWeight: '950', background: 'rgba(245,158,11,0.1)', border: '1px solid rgba(245,158,11,0.3)', padding: '12px 30px', borderRadius: '30px', color: '#f59e0b', display: 'inline-block', letterSpacing: '1px' }}>
+                    PIN: 1127 🪙
+                  </div>
+                </div>
+
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '15px' }}>
+                  <CanvasQRCode url={joinUrl} />
+                  <span style={{ fontSize: '13px', color: 'var(--text-muted)', fontWeight: 'bold' }}>SCAN WITH PHONE</span>
+                </div>
+              </div>
+            )}
+
+            {/* AUCTION DROPPING STATE */}
+            {gameState.gameState === 'AUCTION_DROPPING' && (
+              <div className="glass-panel" style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', padding: '40px', textAlign: 'center', background: 'rgba(10,15,30,0.6)' }}>
+                <span style={{ fontSize: '14px', background: 'rgba(255,23,68,0.1)', border: '1px solid rgba(255,23,68,0.3)', padding: '6px 20px', borderRadius: '25px', color: '#ff1744', fontWeight: 'bold', marginBottom: '30px', animation: 'pulse-glow 1.5s infinite' }}>
+                  ⚡ DUTCH AUCTION IN PROGRESS
+                </span>
+
+                <div style={{ marginBottom: '35px' }}>
+                  <div style={{ fontSize: '16px', color: 'var(--text-secondary)', marginBottom: '10px' }}>ACTIVE ROUND DIFFICULTY</div>
+                  <div style={{
+                    fontSize: '48px',
+                    fontWeight: '950',
+                    letterSpacing: '2px',
+                    color: activeQuestion?.difficulty === 'EASY' ? '#00e676' :
+                           activeQuestion?.difficulty === 'MEDIUM' ? '#ffb300' : '#ff1744'
+                  }}>
+                    ⚽ {activeQuestion?.difficulty} MATCH
+                  </div>
+                </div>
+
+                {/* Giant Dropping Price Board */}
+                <div style={{
+                  background: 'linear-gradient(145deg, rgba(20,25,45,0.8) 0%, rgba(10,12,25,0.9) 100%)',
+                  border: '3px solid #f59e0b',
+                  boxShadow: '0 0 40px rgba(245,158,11,0.25)',
+                  padding: '40px 60px',
+                  borderRadius: '24px',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  alignItems: 'center',
+                  marginBottom: '40px',
+                  minWidth: '380px'
+                }}>
+                  <div style={{ fontSize: '14px', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '2px' }}>Current Snatch Price</div>
+                  <div style={{ fontSize: '96px', fontWeight: '950', color: '#f59e0b', margin: '15px 0 5px 0', fontFamily: 'monospace', letterSpacing: '-2px', textShadow: '0 0 20px rgba(245,158,11,0.5)' }}>
+                    {currentPrice} <span style={{ fontSize: '48px' }}>🪙</span>
+                  </div>
+                  <div style={{ fontSize: '13px', color: 'var(--text-muted)', fontWeight: 'bold' }}>FIRST TEAM TO BUY GETS THE QUESTION!</div>
+                </div>
+              </div>
+            )}
+
+            {/* AUCTION ANSWERING / ANSWERED STATE */}
+            {isAnswering && (
+              <div className="glass-panel" style={{ flex: 1, padding: '35px', display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '25px', borderBottom: '1px solid var(--glass-border)', paddingBottom: '15px' }}>
+                  <span style={{ fontSize: '14px', background: 'rgba(245, 158, 11, 0.15)', color: '#f59e0b', padding: '6px 15px', borderRadius: '25px', fontWeight: 'bold' }}>
+                    🔥 SNATCHED BY: {standings.find(p => p.id === gameState.auctionWinner)?.name} ({currentPrice} 🪙)
+                  </span>
+                  <span style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>
+                    Status: {gameState.gameState === 'AUCTION_ANSWERED' ? 'Answer Submitted 🔒' : 'Thinking... ⏳'}
+                  </span>
+                </div>
+
+                <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
+                  {renderQuestionCard(activeQuestion, { fontSize: '28px', lineHeight: '1.4' })}
+                </div>
+
+                {gameState.gameState === 'AUCTION_ANSWERED' && (
+                  <div style={{ background: 'rgba(0, 176, 255, 0.1)', border: '1px solid rgba(0, 176, 255, 0.3)', padding: '15px', borderRadius: '12px', textAlign: 'center', marginTop: '20px', animation: 'pulse-glow 2s infinite' }}>
+                    <strong style={{ color: '#00b0ff', fontSize: '16px' }}>Check VAR! Referee outcome pending...</strong>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* AUCTION REVEAL STATE */}
+            {gameState.gameState === 'AUCTION_REVEAL' && (
+              <div className="glass-panel" style={{ flex: 1, padding: '35px', display: 'flex', flexDirection: 'column', gap: '20px', justifyContent: 'center', alignItems: 'center', textAlign: 'center' }}>
+                <span style={{ fontSize: '12px', background: 'rgba(255,255,255,0.08)', padding: '4px 15px', borderRadius: '20px', color: 'var(--text-secondary)' }}>
+                  VAR REPLAY OUTCOME
+                </span>
+
+                <div style={{ maxWidth: '600px', margin: '15px 0' }}>
+                  <h3 style={{ fontSize: '22px', color: 'var(--text-muted)', marginBottom: '10px' }}>{activeQuestion?.text}</h3>
+                  <div style={{ fontSize: '15px', color: 'var(--text-secondary)' }}>
+                    Correct Answer: <strong style={{ color: 'var(--pitch-accent)', fontSize: '18px' }}>{gameState.lastResults?.correctAnswer}</strong>
+                  </div>
+                  <div style={{ fontSize: '15px', color: 'var(--text-secondary)', marginTop: '4px' }}>
+                    {standings.find(p => p.id === gameState.lastResults?.winnerId)?.name}'s Answer: <strong style={{ color: gameState.lastResults?.isCorrect ? 'var(--pitch-accent)' : 'var(--red-card)', fontSize: '18px' }}>{gameState.lastResults?.submittedAnswer || 'None'}</strong>
+                  </div>
+                </div>
+
+                <div style={{
+                  background: gameState.lastResults?.isCorrect ? 'rgba(0, 230, 118, 0.15)' : 'rgba(255, 23, 68, 0.15)',
+                  border: gameState.lastResults?.isCorrect ? '2px solid var(--pitch-accent)' : '2px solid var(--red-card)',
+                  boxShadow: gameState.lastResults?.isCorrect ? '0 0 30px rgba(0, 230, 118, 0.2)' : '0 0 30px rgba(255, 23, 68, 0.2)',
+                  padding: '30px 50px',
+                  borderRadius: '20px',
+                  animation: 'pulse-glow 2s infinite',
+                  maxWidth: '500px',
+                  width: '100%'
+                }}>
+                  {gameState.lastResults?.isCorrect ? (
+                    <div>
+                      <h2 style={{ fontSize: '48px', fontWeight: '950', color: 'var(--pitch-accent)', letterSpacing: '2px' }}>
+                        ⚽ GOAL! (CORRECT)
+                      </h2>
+                      <p style={{ color: 'var(--text-secondary)', fontSize: '15px', marginTop: '10px' }}>
+                        <strong>Refunded Bid:</strong> +{gameState.lastResults?.price} Tokens <br />
+                        <strong>Difficulty Bonus:</strong> +{gameState.lastResults?.bonus} Tokens
+                      </p>
+                    </div>
+                  ) : (
+                    <div>
+                      <h2 style={{ fontSize: '48px', fontWeight: '950', color: 'var(--red-card)', letterSpacing: '2px' }}>
+                        ❌ MISS! (INCORRECT)
+                      </h2>
+                      <p style={{ color: 'var(--text-secondary)', fontSize: '15px', marginTop: '10px' }}>
+                        <strong>Purchase Bid lost:</strong> -{gameState.lastResults?.price} Tokens
+                      </p>
+                    </div>
+                  )}
+                </div>
+
+                {gameState.lastResults?.bankruptcyAlert && (
+                  <div style={{ background: 'rgba(255, 179, 0, 0.1)', border: '1px solid #ffb300', padding: '15px 30px', borderRadius: '12px', color: '#ffb300', fontWeight: 'bold', fontSize: '15px', marginTop: '10px', display: 'flex', alignItems: 'center', gap: '10px' }}>
+                    ⚠️ BANKRUPT ALERT! A team has hit 0 tokens. Triggering Open Question next!
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* OPEN QUESTION ACTIVE STATE */}
+            {gameState.gameState === 'OPEN_QUESTION_ACTIVE' && (
+              <div className="glass-panel" style={{ flex: 1, padding: '35px', display: 'flex', flexDirection: 'column' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '25px', borderBottom: '1px solid var(--glass-border)', paddingBottom: '15px' }}>
+                  <span style={{ fontSize: '14px', background: 'rgba(0, 176, 255, 0.15)', color: '#00b0ff', padding: '6px 15px', borderRadius: '25px', fontWeight: 'bold' }}>
+                    📢 OPEN QUESTION ROUND (ALL TEAMS SUBMIT)
+                  </span>
+                  
+                  {/* Progress Bar of Submissions */}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                    <span style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>
+                      Locked: <strong>{gameState.submissionsCount} / {standings.length}</strong>
+                    </span>
+                    <div style={{ width: '120px', height: '8px', background: 'rgba(255,255,255,0.05)', borderRadius: '4px', overflow: 'hidden' }}>
+                      <div style={{ width: `${standings.length > 0 ? (gameState.submissionsCount / standings.length) * 100 : 0}%`, height: '100%', background: '#00b0ff', transition: 'width 0.3s ease' }}></div>
+                    </div>
+                  </div>
+                </div>
+
+                <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
+                  {renderQuestionCard(activeQuestion, { fontSize: '28px', lineHeight: '1.4' })}
+                  
+                  {/* Options List */}
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '15px', marginTop: '30px', maxWidth: '800px', margin: '30px auto 0 auto', width: '100%' }}>
+                    {(activeQuestion?.options || []).map((opt, idx) => {
+                      const letter = String.fromCharCode(65 + idx);
+                      return (
+                        <div key={idx} style={{ padding: '15px 20px', background: 'rgba(255,255,255,0.02)', border: '1px solid var(--glass-border)', borderRadius: '12px', fontSize: '18px', fontWeight: 'bold', display: 'flex', gap: '12px', alignItems: 'center' }}>
+                          <span style={{ background: 'rgba(0, 176, 255, 0.1)', padding: '2px 8px', borderRadius: '4px', color: '#00b0ff' }}>{letter}</span>
+                          <span>{opt}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* OPEN QUESTION REVEAL STATE */}
+            {gameState.gameState === 'OPEN_QUESTION_REVEAL' && (
+              <div className="glass-panel" style={{ flex: 1, padding: '35px', display: 'flex', flexDirection: 'column', gap: '20px', justifyContent: 'center', alignItems: 'center', textAlign: 'center' }}>
+                <span style={{ fontSize: '12px', background: 'rgba(0, 176, 255, 0.1)', padding: '4px 15px', borderRadius: '20px', color: '#00b0ff', fontWeight: 'bold' }}>
+                  OPEN ROUND RESULTS
+                </span>
+
+                <div style={{ maxWidth: '600px', margin: '15px 0' }}>
+                  <h3 style={{ fontSize: '24px', color: 'var(--text-muted)', marginBottom: '10px' }}>{activeQuestion?.text}</h3>
+                  <div style={{ fontSize: '18px', color: 'var(--text-secondary)' }}>
+                    Correct Answer: <strong style={{ color: 'var(--pitch-accent)', fontSize: '22px' }}>Option {gameState.lastResults?.correctAnswer}</strong>
+                  </div>
+                </div>
+
+                {/* Team Answers Reveal: Suspense Flip Card */}
+                <div style={{ width: '100%', maxWidth: '600px', display: 'flex', flexDirection: 'column', gap: '12px', marginTop: '10px' }}>
+                  <div style={{ fontSize: '13px', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '5px' }}>
+                    Reveal (Lowest Tokens First)
+                  </div>
+                  
+                  {/* Sort teams by tokens *before* open question payout (meaning: sort current standings ascending) */}
+                  {[...standings].sort((a, b) => a.fanTokens - b.fanTokens).map((p) => {
+                    const sub = gameState.lastResults?.submissions[p.id];
+                    const isCorrect = sub?.answer === gameState.lastResults?.correctAnswer;
+                    
+                    return (
+                      <div
+                        key={p.id}
+                        style={{
+                          display: 'flex',
+                          justifyContent: 'space-between',
+                          alignItems: 'center',
+                          padding: '15px 25px',
+                          background: isCorrect ? 'rgba(0, 230, 118, 0.08)' : 'rgba(255, 179, 0, 0.08)',
+                          border: `1px solid ${isCorrect ? 'var(--pitch-accent)' : '#ffb300'}`,
+                          borderRadius: '12px',
+                          boxShadow: '0 4px 15px rgba(0,0,0,0.1)'
+                        }}
+                      >
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '15px' }}>
+                          <span style={{ fontSize: '20px' }}>{isCorrect ? '✅' : '❌'}</span>
+                          <div style={{ textAlign: 'left' }}>
+                            <strong style={{ fontSize: '16px', color: '#fff' }}>{p.name}</strong>
+                            <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
+                              Selected: Option {sub?.answer || 'NONE'}
+                            </div>
+                          </div>
+                        </div>
+
+                        <div style={{ fontSize: '18px', fontWeight: '950', color: isCorrect ? 'var(--pitch-accent)' : '#ffb300' }}>
+                          {isCorrect ? '+50 🪙' : '+10 🪙'}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+          </div>
+
+          {/* Right Panel: Standings Podium */}
+          <div className="glass-panel" style={{ padding: '20px', display: 'flex', flexDirection: 'column', height: '100%', borderTop: '3px solid #f59e0b' }}>
+            <h3 style={{ fontSize: '18px', fontWeight: '900', borderBottom: '1px solid var(--glass-border)', paddingBottom: '10px', marginBottom: '15px', textTransform: 'uppercase', letterSpacing: '1px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+              🏆 Standings
+            </h3>
+            
+            <div style={{ flex: 1, overflowY: 'auto' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                <thead>
+                  <tr style={{ borderBottom: '1px solid var(--glass-border)', fontSize: '12px', color: 'var(--text-secondary)' }}>
+                    <th style={{ textAlign: 'left', paddingBottom: '8px', width: '60px' }}>RANK</th>
+                    <th style={{ textAlign: 'left', paddingBottom: '8px' }}>PLAYER</th>
+                    <th style={{ textAlign: 'right', paddingBottom: '8px' }}>TOKENS</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {sortedActiveStandings.map((p, idx) => {
+                    let rankText = idx + 1;
+                    if (idx === 0) rankText = '🥇';
+                    else if (idx === 1) rankText = '🥈';
+                    else if (idx === 2) rankText = '🥉';
+                    
+                    return (
+                      <tr key={p.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.03)' }}>
+                        <td style={{ padding: '12px 0', fontWeight: 'bold', fontSize: '15px' }}>{rankText}</td>
+                        <td style={{ padding: '12px 0', fontWeight: 'bold', fontSize: '15px' }}>{p.name}</td>
+                        <td className="gold-token" style={{ padding: '12px 0', textAlign: 'right', fontWeight: 'bold', fontSize: '15px' }}>
+                          {p.fanTokens} 🪙
+                        </td>
+                      </tr>
+                    );
+                  })}
+                  {sortedActiveStandings.length === 0 && (
+                    <tr>
+                      <td colSpan={3} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '20px 0' }}>
+                        No teams registered
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+            
+            {/* Logo placeholder */}
+            <div style={{ borderTop: '1px solid var(--glass-border)', paddingTop: '15px', textAlign: 'center', fontSize: '11px', color: 'var(--text-muted)', fontWeight: 'bold' }}>
+              🏟️ PYTHON WORLD CUP ARENA
+            </div>
+          </div>
+
+        </div>
+
+      </div>
+    );
+  };
+
+  if (roomId === 'auction') {
+    return renderAuctionMode();
+  }
 
   // Sort questions by difficulty weights (PRE-MATCH -> EASY -> MEDIUM -> HARD) for lobby presentation
   const sortedQuestions = gameState.questions ? [...gameState.questions].sort((a, b) => {
@@ -492,7 +839,7 @@ function ProjectorView({ socket, gameState, standings, roomId, roomName, adminMo
                   </tr>
                 </thead>
                 <tbody>
-                  {standings.map((p) => {
+                  {[...standings].sort((a, b) => b.fanTokens - a.fanTokens).map((p) => {
                     let rankText = p.currentRank;
                     if (p.currentRank === 1) rankText = '🥇';
                     else if (p.currentRank === 2) rankText = '🥈';

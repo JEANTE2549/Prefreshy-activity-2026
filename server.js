@@ -132,10 +132,98 @@ async function initDb() {
             "timerDuration": 0,
             "revealStyle": "VAR"
           },
-          "questions": [],
+          "questions": [
+            {
+              "id": "aq1",
+              "text": "What is the output of print(2 ** 3) in Python?",
+              "difficulty": "EASY",
+              "imageUrl": null,
+              "imageAlign": "TOP",
+              "isPlayed": false,
+              "correctAnswer": "8"
+            },
+            {
+              "id": "aq2",
+              "text": "What built-in function is used to get the number of items in a list?",
+              "difficulty": "EASY",
+              "imageUrl": null,
+              "imageAlign": "TOP",
+              "isPlayed": false,
+              "correctAnswer": "len"
+            },
+            {
+              "id": "aq3",
+              "text": "What is the output of [1, 2] + [3, 4] in Python?",
+              "difficulty": "MEDIUM",
+              "imageUrl": null,
+              "imageAlign": "TOP",
+              "isPlayed": false,
+              "correctAnswer": "[1, 2, 3, 4]"
+            },
+            {
+              "id": "aq4",
+              "text": "Which keyword is used to start a function definition in Python?",
+              "difficulty": "MEDIUM",
+              "imageUrl": null,
+              "imageAlign": "TOP",
+              "isPlayed": false,
+              "correctAnswer": "def"
+            },
+            {
+              "id": "aq5",
+              "text": "What is the output of list(map(lambda x: x*2, [1, 2]))[1]?",
+              "difficulty": "HARD",
+              "imageUrl": null,
+              "imageAlign": "TOP",
+              "isPlayed": false,
+              "correctAnswer": "4"
+            },
+            {
+              "id": "aq6",
+              "text": "What is the result of list(set([1, 2, 2, 3, 3]))?",
+              "difficulty": "HARD",
+              "imageUrl": null,
+              "imageAlign": "TOP",
+              "isPlayed": false,
+              "correctAnswer": "[1, 2, 3]"
+            }
+          ],
+          "openQuestions": [
+            {
+              "id": "oq1",
+              "text": "What is the output of print(type([]))?",
+              "options": ["<class 'list'>", "<class 'tuple'>", "<class 'dict'>", "<class 'set'>"],
+              "correctAnswer": "A",
+              "isPlayed": false
+            },
+            {
+              "id": "oq2",
+              "text": "Which of these is NOT a valid Python variable name?",
+              "options": ["_my_var", "my-var", "my_var2", "MYVAR"],
+              "correctAnswer": "B",
+              "isPlayed": false
+            },
+            {
+              "id": "oq3",
+              "text": "What is the default return value of a function that does not have a return statement?",
+              "options": ["0", "None", "False", "Null"],
+              "correctAnswer": "B",
+              "isPlayed": false
+            },
+            {
+              "id": "oq4",
+              "text": "Which statement is used to handle exceptions in Python?",
+              "options": ["try...except", "try...catch", "if...else", "do...while"],
+              "correctAnswer": "A",
+              "isPlayed": false
+            }
+          ],
           "players": {},
           "submissions": {},
-          "questionStats": []
+          "questionStats": [],
+          "currentBid": 10,
+          "highestBidder": null,
+          "auctionWinner": null
         }
       };
     }
@@ -164,7 +252,12 @@ async function initDb() {
         submissions: r.submissions || {},
         questionStats: r.questionStats || [],
         activeTimer: null,
-        timerSecondsRemaining: 0
+        timerSecondsRemaining: 0,
+        // Auction specific fields
+        openQuestions: r.openQuestions || [],
+        currentBid: r.currentBid || 10,
+        highestBidder: r.highestBidder || null,
+        auctionWinner: r.auctionWinner || null
       };
     });
 
@@ -196,7 +289,12 @@ async function saveDbToSupabase() {
         questions: r.questions,
         players: r.players,
         submissions: r.submissions,
-        questionStats: r.questionStats
+        questionStats: r.questionStats,
+        // Auction fields
+        openQuestions: r.openQuestions || [],
+        currentBid: r.currentBid || 10,
+        highestBidder: r.highestBidder || null,
+        auctionWinner: r.auctionWinner || null
       };
     });
 
@@ -248,6 +346,13 @@ function calculateRanks(room) {
     p.currentRank = idx + 1;
     room.players[p.id] = p;
   });
+}
+
+// Get list of players sorted by tokens / rank
+function getSortedPlayers(room) {
+  if (!room) return [];
+  calculateRanks(room);
+  return Object.values(room.players).sort((a, b) => b.fanTokens - a.fanTokens);
 }
 
 // Active Timer Logic per room
@@ -384,17 +489,14 @@ app.get('/api/state/:roomId', (req, res) => {
 app.get('/api/standings/:roomId', (req, res) => {
   const room = getRoomById(req.params.roomId);
   if (!room) return res.status(404).json({ error: 'Room not found' });
-  calculateRanks(room);
-  res.json(Object.values(room.players));
+  res.json(getSortedPlayers(room));
 });
 
 // CSV Export per room
 app.get('/api/export/:roomId', (req, res) => {
   const room = getRoomById(req.params.roomId);
   if (!room) return res.status(404).json({ error: 'Room not found' });
-  calculateRanks(room);
-  const playersArr = Object.values(room.players);
-  playersArr.sort((a, b) => b.fanTokens - a.fanTokens);
+  const playersArr = getSortedPlayers(room);
 
   const total = playersArr.length;
   const sLimit = Math.max(1, Math.round(total * 0.15));
@@ -449,7 +551,7 @@ io.on('connection', (socket) => {
       timerSecondsRemaining: room.timerSecondsRemaining,
       submittedPlayerIds: Object.keys(room.submissions),
       questions: room.questions,
-      standings: Object.values(room.players)
+      standings: getSortedPlayers(room)
     });
   });
 
@@ -516,7 +618,7 @@ io.on('connection', (socket) => {
     syncDb();
 
     // Broadcast updated standings in room
-    io.to(roomId).emit('standings-update', Object.values(room.players));
+    io.to(roomId).emit('standings-update', getSortedPlayers(room));
     
     callback?.({ 
       success: true, 
@@ -819,11 +921,11 @@ io.on('connection', (socket) => {
         yesCount,
         noCount,
         outcome,
-        winnerCount: Object.values(room.players).filter(p => {
+        winnerCount: getSortedPlayers(room).filter(p => {
           const sub = room.submissions[p.id];
           return sub && sub.prediction === outcome;
         }).length,
-        players: Object.values(room.players),
+        players: getSortedPlayers(room),
         questionStats: room.questionStats
       });
 
@@ -1076,11 +1178,11 @@ io.on('connection', (socket) => {
       yesCount,
       noCount,
       outcome,
-      winnerCount: Object.values(room.players).filter(p => {
+      winnerCount: getSortedPlayers(room).filter(p => {
         const sub = room.submissions[p.id];
         return sub && sub.prediction === outcome;
       }).length,
-      players: Object.values(room.players),
+      players: getSortedPlayers(room),
       questionStats: room.questionStats
     });
 
@@ -1118,6 +1220,394 @@ io.on('connection', (socket) => {
     callback?.({ success: true });
   });
 
+  // Helper to start Dutch Auction drop interval
+  function startAuctionDrop(room) {
+    if (room.activeTimer) {
+      clearInterval(room.activeTimer);
+    }
+    
+    room.activeTimer = setInterval(() => {
+      const liveRoom = getRoomById(room.id);
+      if (!liveRoom || liveRoom.gameState !== 'AUCTION_DROPPING') {
+        clearInterval(room.activeTimer);
+        if (liveRoom) liveRoom.activeTimer = null;
+        return;
+      }
+      
+      if (liveRoom.currentBid > 10) {
+        liveRoom.currentBid = Math.max(10, liveRoom.currentBid - 5);
+        io.to(liveRoom.id).emit('auction-price-update', {
+          currentBid: liveRoom.currentBid
+        });
+        syncDb();
+      } else {
+        clearInterval(liveRoom.activeTimer);
+        liveRoom.activeTimer = null;
+      }
+    }, 1500);
+  }
+
+  // Admin Start Auction Match
+  socket.on('admin-start-auction', ({ roomId, questionId }, callback) => {
+    const room = getRoomById(roomId);
+    if (!room) return callback?.({ success: false, error: 'Room not found.' });
+
+    const question = room.questions.find(q => q.id === questionId);
+    if (!question) return callback?.({ success: false, error: 'Question not found.' });
+
+    room.currentQuestionId = questionId;
+    room.gameState = 'AUCTION_DROPPING';
+    room.auctionWinner = null;
+    room.submissions = {};
+
+    let startPrice = 60;
+    if (question.difficulty === 'EASY') startPrice = 40;
+    else if (question.difficulty === 'HARD') startPrice = 80;
+
+    room.currentBid = startPrice;
+    syncDb();
+
+    // Broadcast new state first
+    io.to(roomId).emit('state-sync', {
+      gameState: room.gameState,
+      currentQuestionId: room.currentQuestionId,
+      activeQuestion: question,
+      submissionsCount: 0,
+      config: room.config,
+      timerSecondsRemaining: 0,
+      currentBid: room.currentBid,
+      auctionWinner: null
+    });
+
+    startAuctionDrop(room);
+    callback?.({ success: true });
+  });
+
+  // Player buys auction (race condition check)
+  socket.on('buy-auction', ({ roomId, playerId }, callback) => {
+    const room = getRoomById(roomId);
+    if (!room) return callback?.({ success: false, error: 'Room not found.' });
+
+    if (room.gameState !== 'AUCTION_DROPPING') {
+      return callback?.({ success: false, error: 'Auction is not active or already bought!' });
+    }
+
+    const player = room.players[playerId];
+    if (!player) return callback?.({ success: false, error: 'Player not found.' });
+
+    if (player.fanTokens < room.currentBid) {
+      return callback?.({ success: false, error: 'Not enough Fan Tokens!' });
+    }
+
+    // Stop timer/dropping
+    if (room.activeTimer) {
+      clearInterval(room.activeTimer);
+      room.activeTimer = null;
+    }
+
+    // Settle purchase
+    room.gameState = 'AUCTION_ANSWERING';
+    room.auctionWinner = playerId;
+    player.fanTokens -= room.currentBid;
+    calculateRanks(room);
+    syncDb();
+
+    const activeQuestion = room.questions.find(q => q.id === room.currentQuestionId);
+
+    // Sync to all clients
+    io.to(roomId).emit('state-sync', {
+      gameState: room.gameState,
+      currentQuestionId: room.currentQuestionId,
+      activeQuestion,
+      submissionsCount: 0,
+      config: room.config,
+      timerSecondsRemaining: 0,
+      currentBid: room.currentBid,
+      auctionWinner: playerId
+    });
+
+    io.to(roomId).emit('standings-update', getSortedPlayers(room));
+    io.to(roomId).emit('auction-won', { winnerId: playerId, price: room.currentBid });
+
+    callback?.({ success: true, price: room.currentBid });
+  });
+
+  // Admin Close Bidding (Skip/Cancel without buyer)
+  socket.on('admin-close-bidding', ({ roomId }, callback) => {
+    const room = getRoomById(roomId);
+    if (!room) return callback?.({ success: false, error: 'Room not found.' });
+
+    if (room.activeTimer) {
+      clearInterval(room.activeTimer);
+      room.activeTimer = null;
+    }
+
+    room.gameState = 'LOBBY';
+    room.currentQuestionId = null;
+    room.auctionWinner = null;
+    syncDb();
+
+    io.to(roomId).emit('state-sync', {
+      gameState: room.gameState,
+      currentQuestionId: null,
+      activeQuestion: null,
+      submissionsCount: 0,
+      config: room.config,
+      timerSecondsRemaining: 0
+    });
+
+    callback?.({ success: true });
+  });
+
+  // Submit Answer for Auction Question
+  socket.on('submit-auction-answer', ({ roomId, playerId, answer }, callback) => {
+    const room = getRoomById(roomId);
+    if (!room) return callback?.({ success: false, error: 'Room not found.' });
+
+    if (room.gameState !== 'AUCTION_ANSWERING') {
+      return callback?.({ success: false, error: 'Not in answering phase!' });
+    }
+
+    if (room.auctionWinner !== playerId) {
+      return callback?.({ success: false, error: 'You did not win this auction!' });
+    }
+
+    room.submissions[playerId] = { answer };
+    room.gameState = 'AUCTION_ANSWERED'; // custom intermediate state while waiting for reveal
+    syncDb();
+
+    io.to(roomId).emit('state-sync', {
+      gameState: room.gameState,
+      currentQuestionId: room.currentQuestionId,
+      activeQuestion: room.questions.find(q => q.id === room.currentQuestionId),
+      submissionsCount: 1,
+      config: room.config,
+      timerSecondsRemaining: 0,
+      currentBid: room.currentBid,
+      auctionWinner: playerId
+    });
+
+    callback?.({ success: true });
+  });
+
+  // Admin Reveal Auction Question Outcome
+  socket.on('admin-reveal-auction-results', ({ roomId, isCorrectOverride }, callback) => {
+    const room = getRoomById(roomId);
+    if (!room) return callback?.({ success: false, error: 'Room not found.' });
+
+    if (room.gameState !== 'AUCTION_ANSWERED' && room.gameState !== 'AUCTION_ANSWERING') {
+      return callback?.({ success: false, error: 'No answer to reveal!' });
+    }
+
+    const question = room.questions.find(q => q.id === room.currentQuestionId);
+    if (!question) return callback?.({ success: false, error: 'Active question not found.' });
+
+    const winnerId = room.auctionWinner;
+    const player = room.players[winnerId];
+    const sub = room.submissions[winnerId];
+
+    let isCorrect = isCorrectOverride;
+    if (isCorrect === undefined || isCorrect === null) {
+      // Auto-evaluation by comparing answer strings
+      const correctAns = (question.correctAnswer || '').trim().toLowerCase();
+      const submittedAns = (sub?.answer || '').trim().toLowerCase();
+      isCorrect = correctAns === submittedAns;
+    }
+
+    let bonus = 35; // MEDIUM default
+    if (question.difficulty === 'EASY') bonus = 20;
+    else if (question.difficulty === 'HARD') bonus = 50;
+
+    let earned = 0;
+    if (isCorrect) {
+      player.goals++;
+      earned = room.currentBid + bonus;
+      player.fanTokens += earned;
+    } else {
+      player.misses++;
+      // No token refund, already deducted in purchase
+    }
+
+    player.matchesPlayed++;
+    player.history.push({
+      questionId: room.currentQuestionId,
+      questionText: question.text,
+      answer: sub?.answer || 'NO RESPONSE',
+      outcome: isCorrect ? 'CORRECT' : 'INCORRECT',
+      tokensEarned: isCorrect ? bonus : -room.currentBid,
+      pricePaid: room.currentBid
+    });
+
+    question.isPlayed = true;
+    room.gameState = 'AUCTION_REVEAL';
+
+    // Store in question stats
+    room.questionStats.push({
+      questionId: room.currentQuestionId,
+      questionText: question.text,
+      outcome: isCorrect ? 'CORRECT' : 'INCORRECT',
+      winnerId,
+      pricePaid: room.currentBid,
+      difficulty: question.difficulty
+    });
+
+    // Check for bankruptcy alert
+    const bankruptTeams = Object.values(room.players).filter(p => p.fanTokens <= 0);
+    const bankruptcyAlert = bankruptTeams.length > 0;
+
+    calculateRanks(room);
+    syncDb();
+
+    io.to(roomId).emit('results-revealed', {
+      winnerId,
+      isCorrect,
+      price: room.currentBid,
+      bonus,
+      correctAnswer: question.correctAnswer,
+      submittedAnswer: sub?.answer || '',
+      players: getSortedPlayers(room),
+      bankruptcyAlert
+    });
+
+    io.to(roomId).emit('questions-update', room.questions);
+    callback?.({ success: true });
+  });
+
+  // Admin Next Auction Match
+  socket.on('admin-next-auction-match', ({ roomId }, callback) => {
+    const room = getRoomById(roomId);
+    if (!room) return callback?.({ success: false, error: 'Room not found.' });
+
+    room.gameState = 'LOBBY';
+    room.currentQuestionId = null;
+    room.auctionWinner = null;
+    room.submissions = {};
+    syncDb();
+
+    io.to(roomId).emit('state-sync', {
+      gameState: room.gameState,
+      currentQuestionId: null,
+      activeQuestion: null,
+      submissionsCount: 0,
+      config: room.config,
+      timerSecondsRemaining: 0
+    });
+
+    callback?.({ success: true });
+  });
+
+  // Admin Launch Open Question
+  socket.on('admin-launch-open-question', ({ roomId, questionId }, callback) => {
+    const room = getRoomById(roomId);
+    if (!room) return callback?.({ success: false, error: 'Room not found.' });
+
+    const question = room.openQuestions.find(q => q.id === questionId);
+    if (!question) return callback?.({ success: false, error: 'Open question not found.' });
+
+    room.currentQuestionId = questionId;
+    room.gameState = 'OPEN_QUESTION_ACTIVE';
+    room.submissions = {};
+    syncDb();
+
+    io.to(roomId).emit('state-sync', {
+      gameState: room.gameState,
+      currentQuestionId: room.currentQuestionId,
+      activeQuestion: question,
+      submissionsCount: 0,
+      config: room.config,
+      timerSecondsRemaining: 0
+    });
+
+    callback?.({ success: true });
+  });
+
+  // Player Submits Open Question Answer
+  socket.on('submit-open-answer', ({ roomId, playerId, answer }, callback) => {
+    const room = getRoomById(roomId);
+    if (!room) return callback?.({ success: false, error: 'Room not found.' });
+
+    if (room.gameState !== 'OPEN_QUESTION_ACTIVE') {
+      return callback?.({ success: false, error: 'Submissions are closed!' });
+    }
+
+    room.submissions[playerId] = { answer };
+    syncDb();
+
+    // Broadcast count update
+    io.to(roomId).emit('submissions-count-update', {
+      count: Object.keys(room.submissions).length,
+      submittedPlayerIds: Object.keys(room.submissions)
+    });
+
+    callback?.({ success: true });
+  });
+
+  // Admin Reveal Open Question Outcome
+  socket.on('admin-reveal-open-results', ({ roomId }, callback) => {
+    const room = getRoomById(roomId);
+    if (!room) return callback?.({ success: false, error: 'Room not found.' });
+
+    if (room.gameState !== 'OPEN_QUESTION_ACTIVE') {
+      return callback?.({ success: false, error: 'Not in active open question!' });
+    }
+
+    const question = room.openQuestions.find(q => q.id === room.currentQuestionId);
+    if (!question) return callback?.({ success: false, error: 'Open question not found.' });
+
+    Object.keys(room.players).forEach(id => {
+      const player = room.players[id];
+      const sub = room.submissions[id];
+
+      const isCorrect = sub && sub.answer === question.correctAnswer;
+      const earned = isCorrect ? 50 : 10;
+      player.fanTokens += earned;
+      player.matchesPlayed++;
+      
+      player.history.push({
+        questionId: room.currentQuestionId,
+        questionText: question.text,
+        answer: sub?.answer || 'NO RESPONSE',
+        outcome: isCorrect ? 'CORRECT' : 'INCORRECT',
+        tokensEarned: earned,
+        type: 'OPEN_QUESTION'
+      });
+    });
+
+    question.isPlayed = true;
+    room.gameState = 'OPEN_QUESTION_REVEAL';
+
+    // Store in stats
+    room.questionStats.push({
+      questionId: room.currentQuestionId,
+      questionText: question.text,
+      outcome: question.correctAnswer,
+      type: 'OPEN_QUESTION'
+    });
+
+    calculateRanks(room);
+    syncDb();
+
+    io.to(roomId).emit('results-revealed', {
+      correctAnswer: question.correctAnswer,
+      submissions: room.submissions,
+      players: getSortedPlayers(room)
+    });
+
+    io.to(roomId).emit('open-questions-update', room.openQuestions);
+    callback?.({ success: true });
+  });
+
+  // Admin Update Custom Open Questions List
+  socket.on('admin-update-open-questions', ({ roomId, openQuestions }, callback) => {
+    const room = getRoomById(roomId);
+    if (!room) return callback?.({ success: false, error: 'Room not found.' });
+
+    room.openQuestions = openQuestions;
+    syncDb();
+    io.to(roomId).emit('open-questions-update', openQuestions);
+    callback?.({ success: true });
+  });
+
   // Manual Adjust Tokens
   socket.on('admin-adjust-tokens', ({ roomId, playerId, amount }, callback) => {
     const room = getRoomById(roomId);
@@ -1127,7 +1617,7 @@ io.on('connection', (socket) => {
       room.players[playerId].fanTokens = Math.max(0, room.players[playerId].fanTokens + amount);
       calculateRanks(room);
       syncDb();
-      io.to(roomId).emit('standings-update', Object.values(room.players));
+      io.to(roomId).emit('standings-update', getSortedPlayers(room));
       callback?.({ success: true });
     } else {
       callback?.({ success: false, error: 'Player not found.' });
@@ -1146,7 +1636,7 @@ io.on('connection', (socket) => {
       }
       calculateRanks(room);
       syncDb();
-      io.to(roomId).emit('standings-update', Object.values(room.players));
+      io.to(roomId).emit('standings-update', getSortedPlayers(room));
       callback?.({ success: true });
     } else {
       callback?.({ success: false, error: 'Player not found.' });

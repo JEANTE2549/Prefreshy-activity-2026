@@ -148,6 +148,10 @@ function App() {
       }
     });
 
+    socket.on('auction-price-update', ({ currentBid }) => {
+      setGameState(prev => ({ ...prev, currentBid }));
+    });
+
     return () => {
       socket.off('state-sync');
       socket.off('timer-tick');
@@ -156,6 +160,7 @@ function App() {
       socket.off('questions-update');
       socket.off('reveal-suspense-start');
       socket.off('results-revealed');
+      socket.off('auction-price-update');
     };
   }, []);
 
@@ -736,16 +741,28 @@ function App() {
 
               <div style={{ borderTop: '1px solid rgba(255,255,255,0.05)', paddingTop: '20px', display: 'flex', gap: '10px' }}>
                 <button 
+                  className="btn-primary" 
+                  style={{ flex: 1, padding: '10px', fontSize: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', background: 'linear-gradient(135deg, #f59e0b 0%, #ff5252 100%)', color: '#170c00' }}
+                  onClick={() => {
+                    setRoomId('auction');
+                    setRoomName('Python Auction');
+                    setAdminMode(true);
+                    setCurrentView('projector');
+                  }}
+                >
+                  <Play size={14} /> Open Projector (Admin)
+                </button>
+                <button 
                   className="btn-secondary" 
                   style={{ flex: 1, padding: '10px', fontSize: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', borderColor: 'rgba(245, 158, 11, 0.3)', color: '#f59e0b' }}
                   onClick={() => {
                     setRoomId('auction');
                     setRoomName('Python Auction');
                     setAdminMode(true);
-                    setCurrentView('auction');
+                    setCurrentView('organizer');
                   }}
                 >
-                  <Layers size={14} /> Open Auction Room
+                  <Settings size={14} /> Organizer Panel
                 </button>
               </div>
             </div>
@@ -789,14 +806,6 @@ function App() {
             socket={socket} 
             gameState={gameState} 
             standings={standings} 
-            roomId={roomId}
-            roomName={roomName}
-            onBackToHub={() => setCurrentView('admin-hub')}
-          />
-        );
-      case 'auction':
-        return (
-          <AuctionPlaceholderView
             roomId={roomId}
             roomName={roomName}
             onBackToHub={() => setCurrentView('admin-hub')}
