@@ -355,11 +355,11 @@ function ProjectorView({ socket, gameState, standings, roomId, roomName, adminMo
                   </tr>
                 </thead>
                 <tbody>
-                  {sortedActiveStandings.map((p, idx) => {
-                    let rankText = idx + 1;
-                    if (idx === 0) rankText = '🥇';
-                    else if (idx === 1) rankText = '🥈';
-                    else if (idx === 2) rankText = '🥉';
+                  {sortedActiveStandings.map((p) => {
+                    let rankText = p.currentRank;
+                    if (p.currentRank === 1) rankText = '🥇';
+                    else if (p.currentRank === 2) rankText = '🥈';
+                    else if (p.currentRank === 3) rankText = '🥉';
                     
                     return (
                       <tr key={p.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.03)' }}>

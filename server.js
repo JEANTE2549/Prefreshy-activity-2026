@@ -342,8 +342,12 @@ function calculateRanks(room) {
 
   playersArr.sort((a, b) => b.fanTokens - a.fanTokens);
 
+  let currentRank = 1;
   playersArr.forEach((p, idx) => {
-    p.currentRank = idx + 1;
+    if (idx > 0 && p.fanTokens < playersArr[idx - 1].fanTokens) {
+      currentRank = idx + 1;
+    }
+    p.currentRank = currentRank;
     room.players[p.id] = p;
   });
 }
