@@ -8,28 +8,40 @@ import { LogOut, Lock, Play, Settings, Layers, UserPlus, Info } from 'lucide-rea
 
 const socket = io(window.location.origin);
 
+const RUDE_WORDS = [
+  'ควย', 'เย็ด', 'หี', 'แตด', 'หำ', 'มึง', 'เหี้ย', 'สัส', 'สัด', 'ระยำ', 'ชาติหมา', 'ดอกทอง', 'แรด',
+  'fuck', 'shit', 'bitch', 'cunt', 'pussy', 'dick', 'asshole', 'พ่อง', 'ตาย', 'แม่ง', 'ลูกกระหรี่', 'อีดอก'
+];
+
+function isRudeName(name) {
+  if (!name) return false;
+  const normalized = name.toLowerCase().replace(/[\s\.\-\_\@]/g, '');
+  return RUDE_WORDS.some(word => normalized.includes(word));
+}
+
 function App() {
   const [currentView, setCurrentView] = useState('landing'); // landing | player-name | admin-login | admin-register | admin-hub | player | projector | organizer | auction
-  
+
   // Player Auth State
   const [pinCode, setPinCode] = useState('');
   const [nickname, setNickname] = useState('');
   const [roomId, setRoomId] = useState('');
   const [roomName, setRoomName] = useState('');
-  
+
   // Admin Auth State
   const [adminUsername, setAdminUsername] = useState('');
   const [adminPassword, setAdminPassword] = useState('');
   const [regKey, setRegKey] = useState('');
   const [adminMode, setAdminMode] = useState(false);
   const [authError, setAuthError] = useState('');
-  
+
   const [gameState, setGameState] = useState({
     gameState: 'LOBBY',
     currentQuestionId: null,
     activeQuestion: null,
     submissionsCount: 0,
     questions: [],
+    pin: '',
     config: {
       startingTokens: 100,
       participationReward: 2,
@@ -41,9 +53,21 @@ function App() {
     timerSecondsRemaining: 0,
     questionStats: []
   });
-  
+
   const [standings, setStandings] = useState([]);
   const [playerId, setPlayerId] = useState('');
+  const [adminToken, setAdminToken] = useState('');
+  const [clickCount, setClickCount] = useState(0);
+  const [playerPinInput, setPlayerPinInput] = useState('');
+  const [isRegisterMode, setIsRegisterMode] = useState(false);
+
+  // Auto-reset secret click count if idle for 1s
+  useEffect(() => {
+    if (clickCount > 0) {
+      const t = setTimeout(() => setClickCount(0), 1000);
+      return () => clearTimeout(t);
+    }
+  }, [clickCount]);
 
   // Fetch unique player UUID from local storage
   useEffect(() => {
@@ -52,19 +76,53 @@ function App() {
       id = 'p-' + Math.random().toString(36).substring(2, 9) + '-' + Math.random().toString(36).substring(2, 9);
       localStorage.setItem('python_wc_player_id', id);
     }
-    setPlayerId(id);
-    
-    // Auto-reclaim player room and name if stored
+
+    // Auto-reclaim state on refresh (Admin vs Player)
     const savedRoomId = localStorage.getItem('python_wc_room_id');
     const savedRoomName = localStorage.getItem('python_wc_room_name');
-    const savedName = localStorage.getItem('python_wc_player_name');
-    if (savedRoomId && savedRoomName && savedName) {
-      setRoomId(savedRoomId);
-      setRoomName(savedRoomName);
-      setNickname(savedName);
-      setCurrentView('player');
+    const isAdmin = localStorage.getItem('python_wc_admin_mode') === 'true';
+    const savedView = localStorage.getItem('python_wc_current_view');
+    const savedAdminToken = localStorage.getItem('python_wc_admin_token');
+
+    if (isAdmin && savedView) {
+      setRoomId(savedRoomId || '');
+      setRoomName(savedRoomName || '');
+      setAdminMode(true);
+      setAdminToken(savedAdminToken || '');
+      setCurrentView(savedView);
+    } else {
+      const savedUsername = localStorage.getItem('python_wc_player_username');
+      const savedPin = localStorage.getItem('python_wc_player_pin');
+      if (savedUsername && savedPin) {
+        setNickname(savedUsername);
+        setPlayerId(savedUsername);
+        setPlayerPinInput(savedPin);
+
+        if (savedRoomId && savedRoomName) {
+          setRoomId(savedRoomId);
+          setRoomName(savedRoomName);
+          setCurrentView('player');
+        } else {
+          setCurrentView('enter-room');
+        }
+      }
     }
   }, []);
+
+  // Save admin and navigation states to local storage on transitions
+  useEffect(() => {
+    if (adminMode) {
+      localStorage.setItem('python_wc_admin_mode', 'true');
+      if (roomId) localStorage.setItem('python_wc_room_id', roomId);
+      if (roomName) localStorage.setItem('python_wc_room_name', roomName);
+      localStorage.setItem('python_wc_current_view', currentView);
+      if (adminToken) localStorage.setItem('python_wc_admin_token', adminToken);
+    } else if (currentView === 'player') {
+      localStorage.removeItem('python_wc_admin_mode');
+      localStorage.removeItem('python_wc_current_view');
+      localStorage.removeItem('python_wc_admin_token');
+    }
+  }, [adminMode, currentView, roomId, roomName, adminToken]);
 
   // Sync state & handle socket events for active room
   useEffect(() => {
@@ -82,7 +140,8 @@ function App() {
           config: res.config,
           timerSecondsRemaining: res.timerSecondsRemaining,
           submittedPlayerIds: res.submittedPlayerIds,
-          questions: res.questions
+          questions: res.questions,
+          pin: res.pin || ''
         }));
         setStandings(res.standings);
       } else {
@@ -97,6 +156,41 @@ function App() {
       .catch(err => console.error('Error fetching standings:', err));
 
   }, [roomId, currentView, playerId]);
+
+  // Handle automatic socket reconnection and room re-entry
+  useEffect(() => {
+    const handleReconnect = () => {
+      if (roomId) {
+        console.log('Socket connected/reconnected. Re-entering room:', roomId);
+        socket.emit('enter-room', { roomId, role: currentView, playerId }, (res) => {
+          if (res.success) {
+            setGameState(prev => ({
+              ...prev,
+              gameState: res.gameState,
+              currentQuestionId: res.currentQuestionId,
+              activeQuestion: res.activeQuestion,
+              submissionsCount: res.submissionsCount,
+              config: res.config,
+              timerSecondsRemaining: res.timerSecondsRemaining,
+              submittedPlayerIds: res.submittedPlayerIds,
+              questions: res.questions,
+              pin: res.pin || ''
+            }));
+            setStandings(res.standings);
+          }
+        });
+
+        if (currentView === 'player' && nickname) {
+          socket.emit('join-game', { roomId, id: playerId, name: nickname });
+        }
+      }
+    };
+
+    socket.on('connect', handleReconnect);
+    return () => {
+      socket.off('connect', handleReconnect);
+    };
+  }, [roomId, currentView, playerId, nickname]);
 
   // Socket broadcast listeners
   useEffect(() => {
@@ -113,8 +207,8 @@ function App() {
     });
 
     socket.on('submission-count-update', ({ count, total, submittedPlayerIds }) => {
-      setGameState(prev => ({ 
-        ...prev, 
+      setGameState(prev => ({
+        ...prev,
         submissionsCount: count,
         totalPlayers: total,
         submittedPlayerIds: submittedPlayerIds
@@ -126,8 +220,8 @@ function App() {
     });
 
     socket.on('reveal-suspense-start', ({ style, ms }) => {
-      setGameState(prev => ({ 
-        ...prev, 
+      setGameState(prev => ({
+        ...prev,
         gameState: 'REVEAL_SUSPENSE',
         revealStyle: style,
         revealMs: ms
@@ -165,7 +259,83 @@ function App() {
   }, []);
 
   // Player Handlers
-  const handleVerifyPin = (e) => {
+  const handlePlayerLogin = (e) => {
+    e.preventDefault();
+    setAuthError('');
+    const user = nickname.trim();
+    const pin = playerPinInput.trim();
+
+    if (!user || !pin) {
+      setAuthError('Please enter your username and a 4-digit PIN!');
+      return;
+    }
+
+    fetch('/api/player/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: user, pin })
+    })
+      .then(async (res) => {
+        const data = await res.json();
+        if (res.ok && data.success) {
+          localStorage.setItem('python_wc_player_username', data.username);
+          localStorage.setItem('python_wc_player_pin', pin);
+          setNickname(data.username);
+          setPlayerId(data.username);
+          setAuthError('');
+          setCurrentView('enter-room');
+        } else {
+          setAuthError(data.error || 'Server connection error. Please try again.');
+        }
+      })
+      .catch(() => setAuthError('Server connection error. Please try again.'));
+  };
+
+  const handlePlayerRegister = (e) => {
+    e.preventDefault();
+    setAuthError('');
+    const user = nickname.trim();
+    const pin = playerPinInput.trim();
+
+    if (!user || !pin) {
+      setAuthError('Please enter your username and a 4-digit PIN!');
+      return;
+    }
+    if (user.length < 3 || user.length > 15) {
+      setAuthError('Please enter a username between 3 and 15 characters!');
+      return;
+    }
+    if (!/^\d{4}$/.test(pin)) {
+      setAuthError('PIN must be 4 digits!');
+      return;
+    }
+    if (isRudeName(user)) {
+      setAuthError('Please use a polite and appropriate nickname!');
+      return;
+    }
+
+    fetch('/api/player/register', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: user, pin })
+    })
+      .then(async (res) => {
+        const data = await res.json();
+        if (res.ok && data.success) {
+          localStorage.setItem('python_wc_player_username', data.username);
+          localStorage.setItem('python_wc_player_pin', pin);
+          setNickname(data.username);
+          setPlayerId(data.username);
+          setAuthError('');
+          setCurrentView('enter-room');
+        } else {
+          setAuthError(data.error || 'Server connection error. Please try again.');
+        }
+      })
+      .catch(() => setAuthError('Server connection error. Please try again.'));
+  };
+
+  const handleEnterRoom = (e) => {
     e.preventDefault();
     setAuthError('');
     if (!pinCode.trim()) return;
@@ -178,9 +348,21 @@ function App() {
       .then(async (res) => {
         const data = await res.json();
         if (res.ok && data.success) {
-          setRoomId(data.roomId);
-          setRoomName(data.roomName);
-          setCurrentView('player-name');
+          const rId = data.roomId;
+          const rName = data.roomName;
+
+          socket.emit('join-game', { roomId: rId, id: playerId, name: nickname }, (joinRes) => {
+            if (joinRes.success) {
+              setRoomId(rId);
+              setRoomName(rName);
+              localStorage.setItem('python_wc_room_id', rId);
+              localStorage.setItem('python_wc_room_name', rName);
+              setAuthError('');
+              setCurrentView('player');
+            } else {
+              setAuthError(joinRes.error || 'Failed to join playing field.');
+            }
+          });
         } else {
           setAuthError(data.error || 'Invalid Game PIN');
         }
@@ -188,24 +370,25 @@ function App() {
       .catch(() => setAuthError('Server connection error. Please try again.'));
   };
 
-  const handleJoinGame = (e) => {
-    e.preventDefault();
+  const handleLeaveRoom = () => {
+    localStorage.removeItem('python_wc_room_id');
+    localStorage.removeItem('python_wc_room_name');
+    setRoomId('');
+    setRoomName('');
+    setPinCode('');
     setAuthError('');
-    const name = nickname.trim();
-    if (!name) {
-      setAuthError('โปรดระบุชื่อเล่นจริงของคุณก่อนเข้าห้อง!');
-      return;
-    }
+    setCurrentView('enter-room');
+  };
 
-    socket.emit('join-game', { roomId, id: playerId, name }, (res) => {
-      if (res.success) {
-        localStorage.setItem('python_wc_player_name', name);
-        localStorage.setItem('python_wc_room_id', roomId);
-        localStorage.setItem('python_wc_room_name', roomName);
-        setCurrentView('player');
-      } else {
-        setAuthError(res.error || 'Failed to join.');
+  const handleSecretClick = () => {
+    setClickCount(prev => {
+      const next = prev + 1;
+      if (next >= 7) {
+        setAuthError('');
+        setCurrentView('admin-login');
+        return 0;
       }
+      return next;
     });
   };
 
@@ -221,15 +404,17 @@ function App() {
     fetch('/api/login', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ 
-        username: adminUsername.trim(), 
-        password: adminPassword.trim() 
+      body: JSON.stringify({
+        username: adminUsername.trim(),
+        password: adminPassword.trim()
       })
     })
       .then(async (res) => {
         const data = await res.json();
         if (res.ok && data.success) {
           setAdminMode(true);
+          setAdminToken(data.token);
+          localStorage.setItem('python_wc_admin_token', data.token);
           setCurrentView('admin-hub');
         } else {
           setAuthError(data.error || 'Incorrect username or password PIN');
@@ -273,9 +458,16 @@ function App() {
     localStorage.removeItem('python_wc_room_id');
     localStorage.removeItem('python_wc_room_name');
     localStorage.removeItem('python_wc_player_name');
+    localStorage.removeItem('python_wc_player_username');
+    localStorage.removeItem('python_wc_player_pin');
+    localStorage.removeItem('python_wc_admin_mode');
+    localStorage.removeItem('python_wc_current_view');
+    localStorage.removeItem('python_wc_admin_token');
     setRoomId('');
     setRoomName('');
     setNickname('');
+    setPlayerId('');
+    setPlayerPinInput('');
     setAdminMode(false);
     setPinCode('');
     setAdminUsername('');
@@ -308,68 +500,100 @@ function App() {
           boxShadow: '0 20px 40px rgba(0,0,0,0.5)',
           borderRadius: '24px'
         }}>
-          <div style={{ fontSize: '70px', marginBottom: '15px', animation: 'bounce-ball 2s infinite ease-in-out' }}>⚽</div>
-          <h1 style={{ fontSize: '32px', fontWeight: '950', marginBottom: '8px', letterSpacing: '1px', textTransform: 'uppercase' }}>
+          <div onClick={handleSecretClick} style={{ fontSize: '70px', marginBottom: '15px', animation: 'bounce-ball 2s infinite ease-in-out', cursor: 'default', userSelect: 'none' }}>⚽</div>
+          <h1 onClick={handleSecretClick} style={{ fontSize: '32px', fontWeight: '950', marginBottom: '8px', letterSpacing: '1px', textTransform: 'uppercase', cursor: 'default', userSelect: 'none' }}>
             Python World Cup
           </h1>
           <p style={{ color: '#c084fc', fontWeight: 'bold', fontSize: '15px', textTransform: 'uppercase', marginBottom: '30px', letterSpacing: '2px' }}>
             PREDICTION CHALLENGE
           </p>
 
-          <form onSubmit={handleVerifyPin}>
-            <input
-              type="text"
-              pattern="[0-9]*"
-              inputMode="numeric"
-              maxLength={6}
-              placeholder="Game PIN"
-              value={pinCode}
-              onChange={(e) => setPinCode(e.target.value)}
-              style={{
-                width: '100%',
-                padding: '18px',
-                fontSize: '22px',
-                fontWeight: '800',
-                textAlign: 'center',
-                borderRadius: '14px',
-                border: '2px solid rgba(255,255,255,0.1)',
-                background: 'rgba(255,255,255,0.15)',
-                color: '#fff',
-                outline: 'none',
-                marginBottom: '15px',
-                transition: 'border-color 0.2s'
-              }}
-              onFocus={(e) => e.target.style.borderColor = '#c084fc'}
-              onBlur={(e) => e.target.style.borderColor = 'rgba(255,255,255,0.1)'}
-            />
+          <h2 style={{ fontSize: '18px', fontWeight: '800', marginBottom: '20px', textTransform: 'uppercase', color: '#a7f3d0' }}>
+            {isRegisterMode ? '🆕 Create Player Account' : '🔑 Player Sign In'}
+          </h2>
+
+          <form onSubmit={isRegisterMode ? handlePlayerRegister : handlePlayerLogin}>
+            <div style={{ textAlign: 'left', marginBottom: '15px' }}>
+              <label style={{ fontSize: '12px', color: 'rgba(255,255,255,0.6)', display: 'block', marginBottom: '6px', fontWeight: 'bold' }}>
+                NICKNAME / USERNAME
+              </label>
+              <input
+                type="text"
+                placeholder="Nickname or Username"
+                value={nickname}
+                onChange={(e) => setNickname(e.target.value)}
+                maxLength={15}
+                style={{
+                  width: '100%',
+                  padding: '14px',
+                  fontSize: '16px',
+                  borderRadius: '12px',
+                  border: '1px solid rgba(255,255,255,0.08)',
+                  background: 'rgba(0,0,0,0.3)',
+                  color: '#fff',
+                  outline: 'none'
+                }}
+              />
+            </div>
+
+            <div style={{ textAlign: 'left', marginBottom: '20px' }}>
+              <label style={{ fontSize: '12px', color: 'rgba(255,255,255,0.6)', display: 'block', marginBottom: '6px', fontWeight: 'bold' }}>
+                4-DIGIT PIN
+              </label>
+              <input
+                type="password"
+                pattern="[0-9]*"
+                inputMode="numeric"
+                maxLength={4}
+                placeholder="4-digit PIN (e.g. 1234)"
+                value={playerPinInput}
+                onChange={(e) => setPlayerPinInput(e.target.value)}
+                style={{
+                  width: '100%',
+                  padding: '14px',
+                  fontSize: '16px',
+                  borderRadius: '12px',
+                  border: '1px solid rgba(255,255,255,0.08)',
+                  background: 'rgba(0,0,0,0.3)',
+                  color: '#fff',
+                  outline: 'none',
+                  letterSpacing: '5px',
+                  textAlign: 'center'
+                }}
+              />
+            </div>
 
             {authError && (
-              <div style={{ color: '#ff4d4d', background: 'rgba(255,77,77,0.1)', border: '1px solid rgba(255,77,77,0.3)', padding: '10px', borderRadius: '10px', marginBottom: '15px', fontSize: '14px', fontWeight: '600' }}>
+              <div style={{ color: '#ff4d4d', background: 'rgba(255,77,77,0.1)', border: '1px solid rgba(255,77,77,0.2)', padding: '10px', borderRadius: '8px', marginBottom: '20px', fontSize: '13px' }}>
                 {authError}
               </div>
             )}
 
-            <button type="submit" className="btn-primary" style={{ width: '100%', padding: '18px', fontSize: '18px', background: 'linear-gradient(135deg, #a855f7 0%, #7c3aed 100%)', boxShadow: '0 4px 20px rgba(124, 58, 237, 0.4)' }}>
-              Enter ⚽
+            <button type="submit" className="btn-primary" style={{ width: '100%', padding: '16px', fontSize: '16px', background: 'linear-gradient(135deg, #a855f7 0%, #7c3aed 100%)', boxShadow: '0 4px 20px rgba(124, 58, 237, 0.4)' }}>
+              {isRegisterMode ? 'Register & Enter ⚽' : 'Sign In ⚽'}
             </button>
           </form>
-        </div>
 
-        <div style={{ marginTop: '40px' }}>
-          <button 
-            onClick={() => { setAuthError(''); setCurrentView('admin-login'); }}
-            style={{ background: 'none', border: 'none', color: 'rgba(255,255,255,0.3)', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', transition: 'color 0.2s' }}
-            onMouseEnter={(e) => e.target.style.color = '#c084fc'}
-            onMouseLeave={(e) => e.target.style.color = 'rgba(255,255,255,0.3)'}
-          >
-            <Lock size={14} /> Organizer Sign In
-          </button>
+          <div style={{ marginTop: '25px', fontSize: '13px' }}>
+            <span style={{ color: 'rgba(255,255,255,0.4)' }}>
+              {isRegisterMode ? 'Already have an account? ' : 'First time playing? '}
+            </span>
+            <button
+              onClick={() => {
+                setAuthError('');
+                setIsRegisterMode(!isRegisterMode);
+              }}
+              style={{ background: 'none', border: 'none', color: '#c084fc', cursor: 'pointer', fontWeight: 'bold', textDecoration: 'underline', padding: 0 }}
+            >
+              {isRegisterMode ? 'Sign In' : 'Create Account'}
+            </button>
+          </div>
         </div>
       </div>
     );
   }
 
-  if (currentView === 'player-name') {
+  if (currentView === 'enter-room') {
     return (
       <div style={{
         minHeight: '100vh',
@@ -391,49 +615,59 @@ function App() {
           boxShadow: '0 20px 40px rgba(0,0,0,0.6)'
         }}>
           <h2 style={{ fontSize: '24px', fontWeight: '900', marginBottom: '8px' }}>🏟️ ENTER PLAYING FIELD</h2>
-          <span style={{ fontSize: '12px', background: 'rgba(0, 230, 118, 0.1)', color: 'var(--pitch-accent)', padding: '2px 10px', borderRadius: '15px', display: 'inline-block', marginBottom: '25px', fontWeight: 'bold' }}>
-            Room: {roomName}
-          </span>
+          <p style={{ color: '#c084fc', fontSize: '14px', marginBottom: '25px', fontWeight: 'bold' }}>
+            Welcome, {nickname}! 🏆
+          </p>
 
-          <form onSubmit={handleJoinGame}>
-            <div style={{ textAlign: 'left', marginBottom: '15px' }}>
+          <form onSubmit={handleEnterRoom}>
+            <div style={{ textAlign: 'left', marginBottom: '20px' }}>
               <label style={{ fontSize: '12px', color: 'var(--text-secondary)', display: 'block', marginBottom: '6px', fontWeight: 'bold' }}>
-                NICKNAME
+                GAME PIN CODE
               </label>
               <input
                 type="text"
-                placeholder="ชื่อเล่นจริงของคุณ (e.g. Somchai)"
-                value={nickname}
-                onChange={(e) => setNickname(e.target.value)}
-                maxLength={15}
+                pattern="[0-9]*"
+                inputMode="numeric"
+                maxLength={6}
+                placeholder="Game PIN (e.g. 123456)"
+                value={pinCode}
+                onChange={(e) => setPinCode(e.target.value)}
                 style={{
                   width: '100%',
-                  padding: '14px',
-                  fontSize: '16px',
+                  padding: '16px',
+                  fontSize: '20px',
+                  fontWeight: 'bold',
                   borderRadius: '12px',
-                  border: '1px solid rgba(255,255,255,0.08)',
+                  border: '2px solid rgba(255,255,255,0.08)',
                   background: 'rgba(0,0,0,0.3)',
                   color: '#fff',
-                  outline: 'none'
+                  outline: 'none',
+                  textAlign: 'center'
                 }}
               />
-              <span style={{ fontSize: '11px', color: 'var(--pitch-accent)', display: 'block', marginTop: '6px' }}>
-                * โปรดระบุชื่อเล่นจริงของคุณสำหรับการเก็บสถิติรางวัล (Please use your real nickname)
-              </span>
             </div>
 
             {authError && (
-              <div style={{ color: '#ff4d4d', background: 'rgba(255,77,77,0.1)', border: '1px solid rgba(255,77,77,0.2)', padding: '10px', borderRadius: '8px', marginBottom: '15px', fontSize: '13px' }}>
+              <div style={{ color: '#ff4d4d', background: 'rgba(255,77,77,0.1)', border: '1px solid rgba(255,77,77,0.2)', padding: '10px', borderRadius: '8px', marginBottom: '20px', fontSize: '13px' }}>
                 {authError}
               </div>
             )}
 
-            <div style={{ display: 'flex', gap: '10px', marginTop: '25px' }}>
-              <button type="button" className="btn-secondary" onClick={() => setCurrentView('landing')} style={{ flex: 1 }}>
-                Back
+            <div style={{ display: 'flex', gap: '15px' }}>
+              <button
+                type="button"
+                className="btn-secondary"
+                onClick={handleLogout}
+                style={{ flex: 1, padding: '14px' }}
+              >
+                Sign Out
               </button>
-              <button type="submit" className="btn-primary" style={{ flex: 1 }}>
-                Enter Stadium 🏟️
+              <button
+                type="submit"
+                className="btn-primary"
+                style={{ flex: 1, padding: '14px', background: 'linear-gradient(135deg, var(--pitch-accent) 0%, #00b0ff 100%)' }}
+              >
+                Enter Room ⚽
               </button>
             </div>
           </form>
@@ -638,7 +872,7 @@ function App() {
         padding: '40px 20px'
       }}>
         <div style={{ maxWidth: '1000px', margin: '0 auto' }}>
-          
+
           <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '40px', borderBottom: '1px solid rgba(255,255,255,0.08)', paddingBottom: '20px' }}>
             <div>
               <span style={{ fontSize: '13px', textTransform: 'uppercase', color: '#00e676', fontWeight: '800', letterSpacing: '1px' }}>Overview</span>
@@ -654,10 +888,10 @@ function App() {
           </p>
 
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(400px, 1fr))', gap: '25px' }}>
-            
+
             {/* Prediction Challenge Workspace Card */}
-            <div 
-              className="glass-panel" 
+            <div
+              className="glass-panel"
               style={{
                 padding: '30px',
                 background: 'rgba(25, 30, 48, 0.55)',
@@ -684,8 +918,8 @@ function App() {
               </div>
 
               <div style={{ borderTop: '1px solid rgba(255,255,255,0.05)', paddingTop: '20px', display: 'flex', gap: '10px' }}>
-                <button 
-                  className="btn-primary" 
+                <button
+                  className="btn-primary"
                   style={{ flex: 1, padding: '10px', fontSize: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', background: 'linear-gradient(135deg, #00e676 0%, #00b0ff 100%)', color: '#07170f' }}
                   onClick={() => {
                     setRoomId('prediction');
@@ -696,8 +930,8 @@ function App() {
                 >
                   <Play size={14} /> Open Projector (Admin)
                 </button>
-                <button 
-                  className="btn-secondary" 
+                <button
+                  className="btn-secondary"
                   style={{ flex: 1, padding: '10px', fontSize: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}
                   onClick={() => {
                     setRoomId('prediction');
@@ -712,8 +946,8 @@ function App() {
             </div>
 
             {/* Python Auction Workspace Card */}
-            <div 
-              className="glass-panel" 
+            <div
+              className="glass-panel"
               style={{
                 padding: '30px',
                 background: 'rgba(25, 30, 48, 0.55)',
@@ -740,8 +974,8 @@ function App() {
               </div>
 
               <div style={{ borderTop: '1px solid rgba(255,255,255,0.05)', paddingTop: '20px', display: 'flex', gap: '10px' }}>
-                <button 
-                  className="btn-primary" 
+                <button
+                  className="btn-primary"
                   style={{ flex: 1, padding: '10px', fontSize: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', background: 'linear-gradient(135deg, #f59e0b 0%, #ff5252 100%)', color: '#170c00' }}
                   onClick={() => {
                     setRoomId('auction');
@@ -752,8 +986,8 @@ function App() {
                 >
                   <Play size={14} /> Open Projector (Admin)
                 </button>
-                <button 
-                  className="btn-secondary" 
+                <button
+                  className="btn-secondary"
                   style={{ flex: 1, padding: '10px', fontSize: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', borderColor: 'rgba(245, 158, 11, 0.3)', color: '#f59e0b' }}
                   onClick={() => {
                     setRoomId('auction');
@@ -778,36 +1012,38 @@ function App() {
     switch (currentView) {
       case 'player':
         return (
-          <PlayerView 
-            socket={socket} 
-            playerId={playerId} 
-            gameState={gameState} 
+          <PlayerView
+            socket={socket}
+            playerId={playerId}
+            gameState={gameState}
             standings={standings}
             roomId={roomId}
             roomName={roomName}
-            onLeaveRoom={handleLogout}
+            onLeaveRoom={handleLeaveRoom}
           />
         );
       case 'projector':
         return (
-          <ProjectorView 
-            socket={socket} 
-            gameState={gameState} 
-            standings={standings} 
+          <ProjectorView
+            socket={socket}
+            gameState={gameState}
+            standings={standings}
             roomId={roomId}
             roomName={roomName}
             adminMode={adminMode}
+            adminToken={adminToken}
             onBackToHub={() => setCurrentView('admin-hub')}
           />
         );
       case 'organizer':
         return (
-          <OrganizerView 
-            socket={socket} 
-            gameState={gameState} 
-            standings={standings} 
+          <OrganizerView
+            socket={socket}
+            gameState={gameState}
+            standings={standings}
             roomId={roomId}
             roomName={roomName}
+            adminToken={adminToken}
             onBackToHub={() => setCurrentView('admin-hub')}
           />
         );

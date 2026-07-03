@@ -23,7 +23,7 @@ const CanvasQRCode = ({ url }) => {
   return <canvas ref={canvasRef} style={{ borderRadius: '12px', border: '5px solid var(--gold-trophy)', boxShadow: '0 0 20px var(--gold-glow)', maxWidth: '100%', height: 'auto' }} />;
 };
 
-function ProjectorView({ socket, gameState, standings, roomId, roomName, adminMode, onBackToHub }) {
+function ProjectorView({ socket, gameState, standings, roomId, roomName, adminMode, adminToken, onBackToHub }) {
   const [joinUrl, setJoinUrl] = useState('');
   
   // Calculate Join URL based on browser location
@@ -499,12 +499,19 @@ function ProjectorView({ socket, gameState, standings, roomId, roomName, adminMo
             
             {joinUrl && <CanvasQRCode url={joinUrl} />}
             
-            <div style={{ background: 'rgba(0,0,0,0.4)', padding: '12px 20px', borderRadius: '8px', border: '1px solid var(--glass-border)', width: '100%' }}>
-              <span style={{ fontSize: '11px', color: 'var(--text-secondary)', display: 'block' }}>MANUAL URL</span>
-              <strong style={{ fontSize: '15px', color: 'var(--pitch-accent)' }}>{joinUrl}</strong>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 120px', gap: '15px', width: '100%' }}>
+              <div style={{ background: 'rgba(0,0,0,0.4)', padding: '12px 15px', borderRadius: '8px', border: '1px solid var(--glass-border)', textAlign: 'left' }}>
+                <span style={{ fontSize: '11px', color: 'var(--text-secondary)', display: 'block', fontWeight: 'bold' }}>MANUAL URL</span>
+                <strong style={{ fontSize: '13px', color: 'var(--pitch-accent)', wordBreak: 'break-all' }}>{joinUrl}</strong>
+              </div>
+              
+              <div style={{ background: 'rgba(0, 230, 118, 0.05)', padding: '12px 10px', borderRadius: '8px', border: '1px solid var(--pitch-accent-glow)', display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
+                <span style={{ fontSize: '11.5px', color: 'var(--pitch-accent)', display: 'block', fontWeight: 'bold' }}>GAME PIN</span>
+                <strong style={{ fontSize: '20px', color: '#fff', letterSpacing: '1px', fontWeight: '950' }}>{gameState.pin || '2026'}</strong>
+              </div>
             </div>
-            <div style={{ fontSize: '13px', color: 'var(--text-muted)' }}>
-              Choose a nickname, get starting Fan Tokens, and prepare to make predictions.
+            <div style={{ fontSize: '12.5px', color: 'var(--text-muted)', lineHeight: '1.4' }}>
+              Create a player account, enter the Game PIN above, and prepare to make predictions!
             </div>
           </div>
 
@@ -575,7 +582,7 @@ function ProjectorView({ socket, gameState, standings, roomId, roomName, adminMo
                         <button 
                           className="btn-primary" 
                           style={{ padding: '6px 12px', fontSize: '11px', flexShrink: 0, marginLeft: '10px' }}
-                          onClick={() => socket.emit('admin-open-question', { roomId, questionId: q.id })}
+                          onClick={() => socket.emit('admin-open-question', { roomId, adminToken, questionId: q.id })}
                         >
                           Launch Match ⚽
                         </button>
@@ -635,7 +642,7 @@ function ProjectorView({ socket, gameState, standings, roomId, roomName, adminMo
                   <button 
                     className="btn-primary" 
                     style={{ background: 'linear-gradient(135deg, var(--red-card) 0%, #d50000 100%)', display: 'flex', alignItems: 'center', gap: '8px', padding: '12px 24px', fontSize: '14px' }}
-                    onClick={() => socket.emit('admin-close-submissions', { roomId })}
+                    onClick={() => socket.emit('admin-close-submissions', { roomId, adminToken })}
                   >
                     <Square size={16} /> Skip Whistle (Close Predictions)
                   </button>
@@ -723,32 +730,52 @@ function ProjectorView({ socket, gameState, standings, roomId, roomName, adminMo
           <p style={{ color: 'var(--text-secondary)' }}>All user predictions have been locked. Waiting for the referee to reveal results...</p>
           
           {adminMode && (
-            <div style={{ marginTop: '20px' }}>
+            <div style={{ marginTop: '20px', display: 'flex', gap: '15px', justifyContent: 'center' }}>
               <button 
                 className="btn-primary" 
-                style={{ fontSize: '16px', padding: '12px 30px', display: 'inline-flex', alignItems: 'center', gap: '8px' }}
-                onClick={() => socket.emit('admin-reveal-results', { roomId })}
+                style={{ fontSize: '16px', padding: '12px 30px', display: 'inline-flex', alignItems: 'center', gap: '8px', background: 'linear-gradient(135deg, #00b0ff 0%, #00e676 100%)', color: '#07170f', border: 'none' }}
+                onClick={() => socket.emit('admin-reveal-results', { roomId, adminToken, revealStyle: 'VAR' })}
               >
-                <Play size={16} /> Reveal Results
+                <Play size={16} /> Reveal via VAR 🖥️
+              </button>
+              <button 
+                className="btn-primary" 
+                style={{ fontSize: '16px', padding: '12px 30px', display: 'inline-flex', alignItems: 'center', gap: '8px', background: 'linear-gradient(135deg, #ff9100 0%, #ff3d00 100%)', color: 'white', border: 'none' }}
+                onClick={() => socket.emit('admin-reveal-results', { roomId, adminToken, revealStyle: 'PENALTY' })}
+              >
+                <Play size={16} /> Reveal via Penalty ⚡
               </button>
             </div>
           )}
         </div>
       )}
 
-      {/* REVEAL SUSPENSE / VAR OVERLAY */}
+      {/* REVEAL SUSPENSE / VAR OR PENALTY OVERLAY */}
       {gameState.gameState === 'REVEAL_SUSPENSE' && (
         <div className="var-overlay">
-          <div className="var-screen" style={{ transform: 'scale(1.2)' }}>
-            <div className="var-ref">🖥️</div>
-            <div className="var-text" style={{ fontSize: '40px' }}>VAR Review</div>
-            <p style={{ color: 'var(--text-secondary)', fontSize: '18px', marginBottom: '35px' }}>
-              REFEREE VERIFYING PLAY BOOK...
-            </p>
-            <div className="var-progress-bar">
-              <div className="var-progress-fill" style={{ width: '100%', transition: 'width 2.8s linear' }}></div>
+          {gameState.revealStyle === 'PENALTY' ? (
+            <div className="var-screen" style={{ transform: 'scale(1.2)', background: 'linear-gradient(135deg, #1e0508 0%, #3a0007 100%)', border: '3px solid #ff3d00', boxShadow: '0 0 40px rgba(255, 61, 0, 0.4)' }}>
+              <div className="var-ref" style={{ animation: 'bounce-ball 0.8s infinite ease-in-out' }}>🥅⚽</div>
+              <div className="var-text" style={{ fontSize: '40px', color: '#ff3d00', textTransform: 'uppercase', letterSpacing: '2px', textShadow: '0 0 20px rgba(255,61,0,0.6)' }}>Penalty Shootout!</div>
+              <p style={{ color: 'var(--text-secondary)', fontSize: '18px', marginBottom: '35px' }}>
+                GOALKEEPER DIVING... TAKING THE SHOT!
+              </p>
+              <div className="var-progress-bar" style={{ background: 'rgba(255,255,255,0.05)' }}>
+                <div className="var-progress-fill" style={{ background: 'linear-gradient(90deg, #ff9100 0%, #ff3d00 100%)', width: '100%', transition: 'width 1.0s linear' }}></div>
+              </div>
             </div>
-          </div>
+          ) : (
+            <div className="var-screen" style={{ transform: 'scale(1.2)' }}>
+              <div className="var-ref">🖥️</div>
+              <div className="var-text" style={{ fontSize: '40px' }}>VAR Review</div>
+              <p style={{ color: 'var(--text-secondary)', fontSize: '18px', marginBottom: '35px' }}>
+                REFEREE VERIFYING PLAY BOOK...
+              </p>
+              <div className="var-progress-bar">
+                <div className="var-progress-fill" style={{ width: '100%', transition: 'width 2.8s linear' }}></div>
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -815,7 +842,7 @@ function ProjectorView({ socket, gameState, standings, roomId, roomName, adminMo
                   <button 
                     className="btn-primary" 
                     style={{ fontSize: '16px', padding: '12px 28px', background: 'linear-gradient(135deg, var(--pitch-accent) 0%, #00b0ff 100%)' }}
-                    onClick={() => socket.emit('admin-next-match', { roomId })}
+                    onClick={() => socket.emit('admin-next-match', { roomId, adminToken })}
                   >
                     Next Match (Back to Lobby) ⚽
                   </button>

@@ -1,13 +1,53 @@
-import React, { useState } from 'react';
-import { Play, Square, Award, Settings, RefreshCw, Trash2, Plus, Download, AlertTriangle, HelpCircle, Coins, Users, PlusCircle, MinusCircle, UserMinus, ArrowLeft, Image, Unlock, Edit } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { Play, Square, Award, Settings, RefreshCw, Trash2, Plus, Download, AlertTriangle, HelpCircle, Coins, Users, PlusCircle, MinusCircle, UserMinus, ArrowLeft, Image, Unlock, Edit, Lock } from 'lucide-react';
 
-function OrganizerView({ socket, gameState, standings, roomId, roomName, onBackToHub }) {
+function OrganizerView({ socket, gameState, standings, roomId, roomName, adminToken, onBackToHub }) {
   // Modal & Dialog States
   const [showLaunchConfirm, setShowLaunchConfirm] = useState(null); // question object
   const [showResetConfirm, setShowResetConfirm] = useState(false);
   const [showAddQuestion, setShowAddQuestion] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [editingQuestionId, setEditingQuestionId] = useState(null);
+  
+  // Security & Recovery states
+  const [showRecoveryHub, setShowRecoveryHub] = useState(false);
+  const [playerAccounts, setPlayerAccounts] = useState([]);
+  const [organizersList, setOrganizersList] = useState([]);
+  const [recoverySearch, setRecoverySearch] = useState('');
+  const [editingAccount, setEditingAccount] = useState(null);
+  const [newAccountPin, setNewAccountPin] = useState('');
+
+  // Fetch security/recovery records on modal load
+  useEffect(() => {
+    if (showRecoveryHub) {
+      socket.emit('admin-get-accounts', { roomId, adminToken }, (res) => {
+        if (res.success) setPlayerAccounts(res.accounts || []);
+      });
+      socket.emit('admin-get-organizers', { roomId, adminToken }, (res) => {
+        if (res.success) setOrganizersList(res.organizers || []);
+      });
+    }
+  }, [showRecoveryHub]);
+
+  const handleUpdatePlayerPin = (username, newPin) => {
+    if (!/^\d{4}$/.test(newPin)) {
+      alert("PIN must be exactly 4 digits.");
+      return;
+    }
+    socket.emit('admin-update-player-pin', { roomId, adminToken, username, newPin }, (res) => {
+      if (res.success) {
+        alert("Player PIN updated successfully!");
+        setEditingAccount(null);
+        setNewAccountPin('');
+        // Refresh list
+        socket.emit('admin-get-accounts', { roomId, adminToken }, (r) => {
+          if (r.success) setPlayerAccounts(r.accounts || []);
+        });
+      } else {
+        alert(res.error || "Failed to update PIN.");
+      }
+    });
+  };
 
   // Auction specific states
   const [showAddAuctionQuestion, setShowAddAuctionQuestion] = useState(false);
@@ -67,8 +107,7 @@ function OrganizerView({ socket, gameState, standings, roomId, roomName, onBackT
         participationReward: parseInt(participationReward) || 0,
         correctPredictionReward: parseInt(correctPredictionReward) || 10,
         goldenGoalReward: parseInt(goldenGoalReward) || 20,
-        timerDuration: parseInt(timerDuration) || 0,
-        revealStyle
+        timerDuration: parseInt(timerDuration) || 0
       }
     }, (res) => {
       if (res.success) {
@@ -145,7 +184,7 @@ function OrganizerView({ socket, gameState, standings, roomId, roomName, onBackT
       updated = [...gameState.questions, newQ];
     }
 
-    socket.emit('admin-update-questions', { roomId, questions: updated }, (res) => {
+    socket.emit('admin-update-questions', { roomId, adminToken, questions: updated }, (res) => {
       if (res.success) {
         setNewQuestionText('');
         setNewQuestionImage(null);
@@ -159,11 +198,11 @@ function OrganizerView({ socket, gameState, standings, roomId, roomName, onBackT
 
   const deleteQuestion = (id) => {
     const updated = gameState.questions.filter(q => q.id !== id);
-    socket.emit('admin-update-questions', { roomId, questions: updated });
+    socket.emit('admin-update-questions', { roomId, adminToken, questions: updated });
   };
 
   const unlockQuestion = (questionId) => {
-    socket.emit('admin-unlock-question', { roomId, questionId }, (res) => {
+    socket.emit('admin-unlock-question', { roomId, adminToken, questionId }, (res) => {
       if (!res.success) {
         alert(res.error || 'Failed to unlock question.');
       }
@@ -177,7 +216,7 @@ function OrganizerView({ socket, gameState, standings, roomId, roomName, onBackT
 
   const confirmLaunchQuestion = () => {
     if (!showLaunchConfirm) return;
-    socket.emit('admin-open-question', { roomId, questionId: showLaunchConfirm.id }, (res) => {
+    socket.emit('admin-open-question', { roomId, adminToken, questionId: showLaunchConfirm.id }, (res) => {
       if (res.success) {
         setShowLaunchConfirm(null);
       }
@@ -185,15 +224,15 @@ function OrganizerView({ socket, gameState, standings, roomId, roomName, onBackT
   };
 
   const closeSubmissions = () => {
-    socket.emit('admin-close-submissions', { roomId });
+    socket.emit('admin-close-submissions', { roomId, adminToken });
   };
 
-  const revealResults = () => {
-    socket.emit('admin-reveal-results', { roomId });
+  const revealResultsStyle = (style) => {
+    socket.emit('admin-reveal-results', { roomId, adminToken, revealStyle: style });
   };
 
   const resetGame = () => {
-    socket.emit('admin-reset-game', { roomId }, () => {
+    socket.emit('admin-reset-game', { roomId, adminToken }, () => {
       setShowResetConfirm(false);
     });
   };
@@ -204,34 +243,34 @@ function OrganizerView({ socket, gameState, standings, roomId, roomName, onBackT
 
   // Adjust player balance
   const adjustTokens = (playerId, amount) => {
-    socket.emit('admin-adjust-tokens', { roomId, playerId, amount });
+    socket.emit('admin-adjust-tokens', { roomId, adminToken, playerId, amount });
   };
 
   // Kick player
   const kickPlayer = (playerId) => {
     if (confirm("Are you sure you want to kick this player from the stadium?")) {
-      socket.emit('admin-kick-player', { roomId, playerId });
+      socket.emit('admin-kick-player', { roomId, adminToken, playerId });
     }
   };
 
   // Recovery tools
   const reopenRound = () => {
-    socket.emit('admin-reopen-round', { roomId });
+    socket.emit('admin-reopen-round', { roomId, adminToken });
   };
 
   const cancelRound = () => {
     if (gameState.gameState === 'REVEALED') {
-      socket.emit('admin-next-match', { roomId });
+      socket.emit('admin-next-match', { roomId, adminToken });
     } else {
       if (confirm("Cancel current round? This will clear all predictions and restore active players' Golden Goals for this round.")) {
-        socket.emit('admin-cancel-round', { roomId });
+        socket.emit('admin-cancel-round', { roomId, adminToken });
       }
     }
   };
 
   const resetQuestion = () => {
     if (confirm("Clear all predictions for this question?")) {
-      socket.emit('admin-reset-question', { roomId });
+      socket.emit('admin-reset-question', { roomId, adminToken });
     }
   };
 
@@ -244,7 +283,7 @@ function OrganizerView({ socket, gameState, standings, roomId, roomName, onBackT
       return;
     }
     
-    socket.emit('admin-emergency-offline', { roomId, yesCount: yes, noCount: no }, (res) => {
+    socket.emit('admin-emergency-offline', { roomId, adminToken, yesCount: yes, noCount: no }, (res) => {
       if (res.success) {
         setShowOfflineInput(false);
         setManualYes('');
@@ -260,37 +299,37 @@ function OrganizerView({ socket, gameState, standings, roomId, roomName, onBackT
     const sortedStandings = [...standings].sort((a, b) => b.fanTokens - a.fanTokens);
 
     const handleStartAuction = (qId) => {
-      socket.emit('admin-start-auction', { roomId, questionId: qId }, (res) => {
+      socket.emit('admin-start-auction', { roomId, adminToken, questionId: qId }, (res) => {
         if (!res.success) alert(res.error);
       });
     };
 
     const handleCloseBidding = () => {
-      socket.emit('admin-close-bidding', { roomId }, (res) => {
+      socket.emit('admin-close-bidding', { roomId, adminToken }, (res) => {
         if (!res.success) alert(res.error);
       });
     };
 
     const handleRevealAuctionResults = (isCorrectOverride) => {
-      socket.emit('admin-reveal-auction-results', { roomId, isCorrectOverride }, (res) => {
+      socket.emit('admin-reveal-auction-results', { roomId, adminToken, isCorrectOverride }, (res) => {
         if (!res.success) alert(res.error);
       });
     };
 
     const handleNextAuctionMatch = () => {
-      socket.emit('admin-next-auction-match', { roomId }, (res) => {
+      socket.emit('admin-next-auction-match', { roomId, adminToken }, (res) => {
         if (!res.success) alert(res.error);
       });
     };
 
     const handleLaunchOpenQuestion = (qId) => {
-      socket.emit('admin-launch-open-question', { roomId, questionId: qId }, (res) => {
+      socket.emit('admin-launch-open-question', { roomId, adminToken, questionId: qId }, (res) => {
         if (!res.success) alert(res.error);
       });
     };
 
     const handleRevealOpenResults = () => {
-      socket.emit('admin-reveal-open-results', { roomId }, (res) => {
+      socket.emit('admin-reveal-open-results', { roomId, adminToken }, (res) => {
         if (!res.success) alert(res.error);
       });
     };
@@ -334,7 +373,7 @@ function OrganizerView({ socket, gameState, standings, roomId, roomName, onBackT
         updatedQuestions.push(newQ);
       }
 
-      socket.emit('admin-update-questions', { roomId, questions: updatedQuestions }, (res) => {
+      socket.emit('admin-update-questions', { roomId, adminToken, questions: updatedQuestions }, (res) => {
         if (res.success) {
           setShowAddAuctionQuestion(false);
           setAqText('');
@@ -351,7 +390,7 @@ function OrganizerView({ socket, gameState, standings, roomId, roomName, onBackT
     const deleteAuctionQuestion = (qId) => {
       if (!window.confirm('Delete this auction question?')) return;
       const updated = (gameState.questions || []).filter(q => q.id !== qId);
-      socket.emit('admin-update-questions', { roomId, questions: updated });
+      socket.emit('admin-update-questions', { roomId, adminToken, questions: updated });
     };
 
     const editAuctionQuestion = (q) => {
@@ -385,7 +424,7 @@ function OrganizerView({ socket, gameState, standings, roomId, roomName, onBackT
         updated.push(newQ);
       }
 
-      socket.emit('admin-update-open-questions', { roomId, openQuestions: updated }, (res) => {
+      socket.emit('admin-update-open-questions', { roomId, adminToken, openQuestions: updated }, (res) => {
         if (res.success) {
           setShowAddOpenQuestion(false);
           setOqText('');
@@ -404,7 +443,7 @@ function OrganizerView({ socket, gameState, standings, roomId, roomName, onBackT
     const deleteOpenQuestion = (qId) => {
       if (!window.confirm('Delete this open question?')) return;
       const updated = (gameState.openQuestions || []).filter(q => q.id !== qId);
-      socket.emit('admin-update-open-questions', { roomId, openQuestions: updated });
+      socket.emit('admin-update-open-questions', { roomId, adminToken, openQuestions: updated });
     };
 
     const editOpenQuestion = (q) => {
@@ -439,6 +478,9 @@ function OrganizerView({ socket, gameState, standings, roomId, roomName, onBackT
           </div>
 
           <div style={{ display: 'flex', gap: '10px' }}>
+            <button className="btn-secondary" onClick={() => setShowRecoveryHub(true)} style={{ display: 'flex', alignItems: 'center', gap: '6px', color: '#60a5fa', borderColor: 'rgba(96,165,250,0.3)', padding: '8px 15px', fontSize: '12px' }}>
+              <Lock size={14} /> Security & Recovery
+            </button>
             <button className="btn-secondary" style={{ padding: '8px 15px', fontSize: '12px' }} onClick={triggerReset}>
               <RefreshCw size={14} /> Full Reset
             </button>
@@ -875,6 +917,9 @@ function OrganizerView({ socket, gameState, standings, roomId, roomName, onBackT
         </div>
 
         <div className="flex-wrap-mobile">
+          <button className="btn-secondary" onClick={() => setShowRecoveryHub(true)} style={{ display: 'flex', alignItems: 'center', gap: '6px', color: '#60a5fa', borderColor: 'rgba(96,165,250,0.3)' }}>
+            <Lock size={16} /> Security & Recovery
+          </button>
           <button className="btn-secondary" onClick={() => setShowSettings(true)} style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
             <Settings size={16} /> Rules Config
           </button>
@@ -935,9 +980,14 @@ function OrganizerView({ socket, gameState, standings, roomId, roomName, onBackT
                     </button>
                   )}
                   {(gameState.gameState === 'CLOSED' || gameState.gameState === 'ACTIVE_QUESTION') && (
-                    <button className="btn-primary" onClick={revealResults} style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                      <Play size={16} /> Reveal results & Award Tokens ({gameState.config.revealStyle} Reveal)
-                    </button>
+                    <div style={{ display: 'flex', gap: '10px' }}>
+                      <button className="btn-primary" onClick={() => revealResultsStyle('VAR')} style={{ display: 'flex', alignItems: 'center', gap: '6px', background: 'linear-gradient(135deg, #00b0ff 0%, #00e676 100%)', color: '#07170f', border: 'none' }}>
+                        <Play size={16} /> Reveal via VAR 🖥️
+                      </button>
+                      <button className="btn-primary" onClick={() => revealResultsStyle('PENALTY')} style={{ display: 'flex', alignItems: 'center', gap: '6px', background: 'linear-gradient(135deg, #ff9100 0%, #ff3d00 100%)', color: 'white', border: 'none' }}>
+                        <Play size={16} /> Reveal via Penalty ⚡
+                      </button>
+                    </div>
                   )}
                   {gameState.gameState === 'REVEALED' && (
                     <button className="btn-primary" onClick={cancelRound} style={{ background: 'var(--text-muted)', color: 'var(--pitch-green-dark)', boxShadow: 'none', display: 'flex', alignItems: 'center', gap: '6px' }}>
@@ -1360,14 +1410,6 @@ function OrganizerView({ socket, gameState, standings, roomId, roomName, onBackT
               </div>
 
               <div>
-                <label style={{ fontSize: '12px', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px' }}>Reveal Suspense Style</label>
-                <select className="text-input" style={{ padding: '10px', background: 'var(--input-bg)', color: 'white' }} value={revealStyle} onChange={(e) => setRevealStyle(e.target.value)}>
-                  <option value="VAR">🖥️ VAR Reveal (3s Suspense Countdown)</option>
-                  <option value="PENALTY">⚡ Penalty Shootout Reveal (Instant/0.5s)</option>
-                </select>
-              </div>
-
-              <div>
                 <label style={{ fontSize: '12px', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px' }}>Round Timer Duration (Seconds)</label>
                 <select className="text-input" style={{ padding: '10px', background: 'var(--input-bg)', color: 'white' }} value={timerDuration} onChange={(e) => setTimerDuration(e.target.value)}>
                   <option value="0">Indefinite (Organizer whistle closes)</option>
@@ -1381,6 +1423,131 @@ function OrganizerView({ socket, gameState, standings, roomId, roomName, onBackT
             <div style={{ display: 'flex', gap: '15px', justifyContent: 'flex-end' }}>
               <button className="btn-secondary" onClick={() => setShowSettings(false)}>Cancel</button>
               <button className="btn-primary" onClick={saveConfig}>Save Rules</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* SECURITY & PIN RECOVERY HUB */}
+      {showRecoveryHub && (
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.85)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 10000 }}>
+          <div className="glass-panel" style={{ padding: '30px', maxWidth: '800px', width: '95%', maxHeight: '90vh', display: 'flex', flexDirection: 'column', gap: '20px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--glass-border)', paddingBottom: '10px' }}>
+              <h3 style={{ fontSize: '18px', fontWeight: '800', display: 'flex', alignItems: 'center', gap: '8px', color: '#60a5fa' }}>
+                <Lock size={20} /> Security & Recovery Hub
+              </h3>
+              <button className="btn-secondary" onClick={() => setShowRecoveryHub(false)} style={{ padding: '6px 12px', fontSize: '12px' }}>
+                Close
+              </button>
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '25px', overflowY: 'auto', flex: 1, paddingRight: '5px' }}>
+              {/* Left Side: Player Recovery */}
+              <div>
+                <h4 style={{ fontSize: '14px', fontWeight: 'bold', marginBottom: '10px', color: 'var(--text-secondary)' }}>
+                  🔑 Player PIN Recovery
+                </h4>
+
+                <input
+                  type="text"
+                  className="text-input"
+                  placeholder="Search username..."
+                  value={recoverySearch}
+                  onChange={(e) => setRecoverySearch(e.target.value)}
+                  style={{ marginBottom: '15px', padding: '10px 14px', fontSize: '14px' }}
+                />
+
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '400px', overflowY: 'auto' }}>
+                  {playerAccounts
+                    .filter(acc => acc.username.toLowerCase().includes(recoverySearch.toLowerCase()))
+                    .map(acc => {
+                      const isEditing = editingAccount === acc.username;
+                      return (
+                        <div key={acc.username} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 15px', background: 'rgba(255,255,255,0.03)', border: '1px solid var(--glass-border)', borderRadius: '8px' }}>
+                          <span style={{ fontWeight: 'bold', fontSize: '14px' }}>{acc.username}</span>
+                          
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                            {isEditing ? (
+                              <>
+                                <input
+                                  type="text"
+                                  pattern="[0-9]*"
+                                  inputMode="numeric"
+                                  maxLength={4}
+                                  value={newAccountPin}
+                                  onChange={(e) => setNewAccountPin(e.target.value.replace(/\D/g, ''))}
+                                  placeholder="New PIN"
+                                  style={{
+                                    width: '80px',
+                                    padding: '6px 10px',
+                                    fontSize: '13px',
+                                    background: 'rgba(0,0,0,0.5)',
+                                    border: '1px solid var(--pitch-accent)',
+                                    borderRadius: '6px',
+                                    color: '#fff',
+                                    textAlign: 'center'
+                                  }}
+                                />
+                                <button
+                                  className="btn-primary"
+                                  onClick={() => handleUpdatePlayerPin(acc.username, newAccountPin)}
+                                  style={{ padding: '6px 10px', fontSize: '11px', display: 'inline-block', width: 'auto' }}
+                                >
+                                  Save
+                                </button>
+                                <button
+                                  className="btn-secondary"
+                                  onClick={() => setEditingAccount(null)}
+                                  style={{ padding: '6px 10px', fontSize: '11px', display: 'inline-block', width: 'auto' }}
+                                >
+                                  Cancel
+                                </button>
+                              </>
+                            ) : (
+                              <>
+                                <span style={{ fontSize: '13px', color: '#a7f3d0', fontFamily: 'monospace', letterSpacing: '2px', fontWeight: 'bold' }}>
+                                  PIN: {acc.pin}
+                                </span>
+                                <button
+                                  onClick={() => {
+                                    setEditingAccount(acc.username);
+                                    setNewAccountPin(acc.pin);
+                                  }}
+                                  style={{ background: 'none', border: 'none', color: '#60a5fa', cursor: 'pointer', display: 'flex', alignItems: 'center' }}
+                                  title="Change PIN"
+                                >
+                                  <Edit size={14} />
+                                </button>
+                              </>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+
+                  {playerAccounts.length === 0 && (
+                    <div style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '20px 0', fontSize: '13px' }}>
+                      No registered player accounts found.
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Right Side: Organizer List */}
+              <div style={{ borderLeft: '1px solid var(--glass-border)', paddingLeft: '20px' }}>
+                <h4 style={{ fontSize: '14px', fontWeight: 'bold', marginBottom: '15px', color: 'var(--text-secondary)' }}>
+                  🛡️ Registered Admins
+                </h4>
+
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '450px', overflowY: 'auto' }}>
+                  {organizersList.map(adminName => (
+                    <div key={adminName} style={{ padding: '10px 15px', background: 'rgba(255,255,255,0.03)', border: '1px solid var(--glass-border)', borderRadius: '8px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <span style={{ width: '8px', height: '8px', background: 'var(--pitch-accent)', borderRadius: '50%' }}></span>
+                      <span style={{ fontSize: '13px', fontWeight: 'bold' }}>{adminName}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
             </div>
           </div>
         </div>

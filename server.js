@@ -6,6 +6,7 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { createClient } from '@supabase/supabase-js';
+import crypto from 'crypto';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -36,6 +37,7 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 // In-memory data copy
 let dbInMemory = {};
 let roomsState = {};
+const adminSessions = new Set();
 
 // Load database from Supabase
 async function initDb() {
@@ -56,6 +58,8 @@ async function initDb() {
     // Run schema migrations/setup if empty
     if (!db.adminPassword) db.adminPassword = '1234';
     if (!db.organizers) db.organizers = { "admin": "admin", "Jean": "J2710" };
+    if (!db.accounts) db.accounts = {};
+    dbInMemory.accounts = db.accounts;
     if (!db.rooms) {
       db.rooms = {
         "prediction": {
@@ -75,7 +79,7 @@ async function initDb() {
           "questions": [
             {
               "id": "q-prematch",
-              "text": "น้องๆ พร้อมเรียนแล้วใช่ไหมค้าบบ",
+              "text": "Are you guys ready to learn?",
               "difficulty": "PRE-MATCH",
               "imageUrl": null,
               "imageAlign": "TOP",
@@ -274,6 +278,7 @@ async function saveDbToSupabase() {
     const data = {
       adminPassword: dbInMemory.adminPassword || '1234',
       organizers: dbInMemory.organizers || { "admin": "admin", "Jean": "J2710" },
+      accounts: dbInMemory.accounts || {},
       rooms: {}
     };
 
@@ -328,6 +333,21 @@ function getRoomByPin(pin) {
 
 function getRoomById(id) {
   return roomsState[id] || null;
+}
+
+function verifyAdminToken(token) {
+  return token && adminSessions.has(token);
+}
+
+const RUDE_WORDS = [
+  'ควย', 'เย็ด', 'หี', 'แตด', 'หำ', 'มึง', 'กู', 'เหี้ย', 'สัส', 'สัด', 'ระยำ', 'ชาติหมา', 'ดอกทอง', 'แรด',
+  'fuck', 'shit', 'bitch', 'cunt', 'pussy', 'dick', 'asshole', 'พ่อง', 'ตาย', 'แม่ง', 'ลูกกระหรี่', 'อีดอก'
+];
+
+function isRudeName(name) {
+  if (!name) return false;
+  const normalized = name.toLowerCase().replace(/[\s\.\-\_\@]/g, '');
+  return RUDE_WORDS.some(word => normalized.includes(word));
 }
 
 // Calculate player ranks based on tokens in a room
@@ -412,10 +432,66 @@ app.post('/api/login', (req, res) => {
   const { username, password } = req.body;
   if (!dbInMemory.organizers) dbInMemory.organizers = { "admin": "admin", "Jean": "J2710" };
   if (dbInMemory.organizers[username] && dbInMemory.organizers[username] === password) {
-    res.json({ success: true });
+    const token = crypto.randomUUID();
+    adminSessions.add(token);
+    res.json({ success: true, token });
   } else {
     res.status(401).json({ error: 'Incorrect username or password.' });
   }
+});
+
+// Register Player Account
+app.post('/api/player/register', (req, res) => {
+  const { username, pin } = req.body;
+  if (!username || !pin) {
+    return res.status(400).json({ error: 'Username and 4-digit PIN are required.' });
+  }
+
+  const trimmedUsername = username.trim();
+  if (trimmedUsername.length < 3 || trimmedUsername.length > 15) {
+    return res.status(400).json({ error: 'Username must be between 3 and 15 characters.' });
+  }
+
+  if (!/^\d{4}$/.test(pin)) {
+    return res.status(400).json({ error: 'PIN must be exactly 4 digits.' });
+  }
+
+  if (isRudeName(trimmedUsername)) {
+    return res.status(400).json({ error: 'Please use a commonly accepted nickname!' });
+  }
+
+  if (!dbInMemory.accounts) dbInMemory.accounts = {};
+  if (dbInMemory.accounts[trimmedUsername.toLowerCase()]) {
+    return res.status(400).json({ error: 'This username has already been used!' });
+  }
+
+  dbInMemory.accounts[trimmedUsername.toLowerCase()] = {
+    username: trimmedUsername,
+    pin: pin
+  };
+
+  syncDb();
+  res.json({ success: true, username: trimmedUsername });
+});
+
+// Login Player Account
+app.post('/api/player/login', (req, res) => {
+  const { username, pin } = req.body;
+  if (!username || !pin) {
+    return res.status(400).json({ error: 'Username and 4-digit PIN are required.' });
+  }
+
+  const normalized = username.trim().toLowerCase();
+  if (!dbInMemory.accounts || !dbInMemory.accounts[normalized]) {
+    return res.status(401).json({ error: 'This username does not exist!' });
+  }
+
+  const account = dbInMemory.accounts[normalized];
+  if (account.pin !== pin) {
+    return res.status(401).json({ error: 'Invalid 4-digit PIN!' });
+  }
+
+  res.json({ success: true, username: account.username });
 });
 
 // Base64 Image Upload
@@ -477,7 +553,7 @@ app.post('/api/verify-pin', (req, res) => {
 app.get('/api/state/:roomId', (req, res) => {
   const room = getRoomById(req.params.roomId);
   if (!room) return res.status(404).json({ error: 'Room not found' });
-  
+
   res.json({
     gameState: room.gameState,
     currentQuestionId: room.currentQuestionId,
@@ -508,14 +584,14 @@ app.get('/api/export/:roomId', (req, res) => {
   const bLimit = Math.max(1, Math.round(total * 0.80));
 
   let csvContent = 'Rank,Nickname,Fan Tokens,Matches Played,Correct Predictions,Incorrect Predictions,Accuracy %,Best Streak,Golden Goal Status,Participation %,Auction Eligible,Suggested Tier\n';
-  
+
   playersArr.forEach((p, idx) => {
     const accuracy = p.matchesPlayed > 0 ? Math.round((p.goals / p.matchesPlayed) * 100) : 0;
     const totalRounds = room.questionStats.length;
     const participationRate = totalRounds > 0 ? Math.round((p.matchesPlayed / totalRounds) * 100) : 100;
     const eligible = participationRate >= 50 ? 'YES' : 'NO';
     const ggStatus = p.goldenGoalAvailable ? 'Available' : 'Used';
-    
+
     let tier = 'C';
     if (idx < sLimit) tier = 'S';
     else if (idx < aLimit) tier = 'A';
@@ -532,6 +608,24 @@ app.get('/api/export/:roomId', (req, res) => {
 // WebSocket Event Handling
 io.on('connection', (socket) => {
   console.log('Client connected:', socket.id);
+
+  // Secure all admin socket events via middleware
+  socket.use((packet, next) => {
+    const event = packet[0];
+    const data = packet[1];
+    const callback = packet[2];
+
+    if (event && event.startsWith('admin-')) {
+      const adminToken = data ? data.adminToken : null;
+      if (!verifyAdminToken(adminToken)) {
+        if (typeof callback === 'function') {
+          return callback({ success: false, error: 'Unauthorized admin action.' });
+        }
+        return next(new Error('Unauthorized admin action.'));
+      }
+    }
+    next();
+  });
 
   // Client requests room attachment
   socket.on('enter-room', ({ roomId, role, playerId }, callback) => {
@@ -555,7 +649,8 @@ io.on('connection', (socket) => {
       timerSecondsRemaining: room.timerSecondsRemaining,
       submittedPlayerIds: Object.keys(room.submissions),
       questions: room.questions,
-      standings: getSortedPlayers(room)
+      standings: getSortedPlayers(room),
+      pin: room.pin
     });
   });
 
@@ -573,8 +668,16 @@ io.on('connection', (socket) => {
       return callback?.({ success: false, error: 'Nickname and UUID are required.' });
     }
 
+    const trimmedName = name.trim();
+    const normalized = trimmedName.toLowerCase();
+
+    // Verify that player account exists
+    if (!dbInMemory.accounts || !dbInMemory.accounts[normalized]) {
+      return callback?.({ success: false, error: 'This username does not exist!' });
+    }
+
     // Server-side check for duplicate nickname
-    const duplicate = Object.values(room.players).find(p => p.id !== id && p.name.toLowerCase() === name.trim().toLowerCase());
+    const duplicate = Object.values(room.players).find(p => p.id !== id && p.name.toLowerCase() === trimmedName.toLowerCase());
     if (duplicate) {
       return callback?.({ success: false, error: 'This nickname is already taken in this room!' });
     }
@@ -582,17 +685,20 @@ io.on('connection', (socket) => {
     let player = room.players[id];
 
     if (!player) {
-      const existing = Object.values(room.players);
-      let startingTokens = room.config.startingTokens;
-      
-      if (existing.length > 0) {
-        const sum = existing.reduce((acc, p) => acc + p.fanTokens, 0);
-        startingTokens = Math.max(50, Math.round(sum / existing.length));
+      let startingTokens = room.config.startingTokens !== undefined ? room.config.startingTokens : 100;
+
+      // Carry over tokens from prediction to auction automatically
+      if (roomId === 'auction') {
+        const predictionRoom = getRoomById('prediction');
+        if (predictionRoom && predictionRoom.players[id]) {
+          startingTokens = predictionRoom.players[id].fanTokens;
+          console.log(`Carrying over ${startingTokens} tokens for user ${id} from prediction to auction.`);
+        }
       }
 
       player = {
         id,
-        name: name.trim(),
+        name: trimmedName,
         fanTokens: startingTokens,
         prevRank: 1,
         currentRank: 1,
@@ -623,11 +729,11 @@ io.on('connection', (socket) => {
 
     // Broadcast updated standings in room
     io.to(roomId).emit('standings-update', getSortedPlayers(room));
-    
-    callback?.({ 
-      success: true, 
-      player, 
-      gameState: room.gameState, 
+
+    callback?.({
+      success: true,
+      player,
+      gameState: room.gameState,
       activeQuestion: room.questions.find(q => q.id === room.currentQuestionId) || null,
       submissions: room.submissions[id] || null
     });
@@ -671,24 +777,24 @@ io.on('connection', (socket) => {
       }
     }
 
-    room.submissions[playerId] = { 
-      answer, 
-      prediction, 
+    room.submissions[playerId] = {
+      answer,
+      prediction,
       useGoldenGoal: !!useGoldenGoal,
-      useSilverGoal: !!useSilverGoal 
+      useSilverGoal: !!useSilverGoal
     };
-    
+
     if (useGoldenGoal) {
       player.goldenGoalAvailable = false;
     }
     if (useSilverGoal) {
       player.silverGoalAvailable = false;
     }
-    
+
     syncDb();
 
     callback?.({ success: true, submission: room.submissions[playerId] });
-    
+
     io.to(roomId).emit('submission-count-update', {
       count: Object.keys(room.submissions).length,
       total: Object.keys(room.players).length,
@@ -716,7 +822,7 @@ io.on('connection', (socket) => {
   });
 
   // --- ADMIN ACTIONS (ROOM-SCOPED) ---
-  
+
   // Open Question
   socket.on('admin-open-question', ({ roomId, questionId }, callback) => {
     const room = getRoomById(roomId);
@@ -745,8 +851,8 @@ io.on('connection', (socket) => {
     });
     io.to(roomId).emit('standings-update', Object.values(room.players));
 
-    // Handle timer
-    if (room.config.timerDuration > 0) {
+    // Handle timer (Skip timer for PRE-MATCH trial questions)
+    if (room.config.timerDuration > 0 && question.difficulty !== 'PRE-MATCH') {
       startQuestionTimer(
         room,
         room.config.timerDuration,
@@ -799,7 +905,7 @@ io.on('connection', (socket) => {
   });
 
   // Reveal results
-  socket.on('admin-reveal-results', ({ roomId }, callback) => {
+  socket.on('admin-reveal-results', ({ roomId, revealStyle }, callback) => {
     const room = getRoomById(roomId);
     if (!room) return callback?.({ success: false, error: 'Room not found.' });
 
@@ -809,21 +915,22 @@ io.on('connection', (socket) => {
 
     stopQuestionTimer(room);
     room.gameState = 'REVEAL_SUSPENSE';
-    
-    const suspenseMs = room.config.revealStyle === 'VAR' ? 3000 : 500;
-    
-    io.to(roomId).emit('reveal-suspense-start', { 
-      style: room.config.revealStyle, 
-      ms: suspenseMs 
+
+    const style = revealStyle || room.config.revealStyle || 'VAR';
+    const suspenseMs = style === 'VAR' ? 3000 : 1200;
+
+    io.to(roomId).emit('reveal-suspense-start', {
+      style: style,
+      ms: suspenseMs
     });
 
     setTimeout(() => {
       const subs = Object.values(room.submissions);
       const totalVotes = subs.length;
-      
+
       let yesCount = 0;
       let noCount = 0;
-      
+
       subs.forEach(s => {
         if (s.answer === 'YES') yesCount++;
         else if (s.answer === 'NO') noCount++;
@@ -856,7 +963,7 @@ io.on('connection', (socket) => {
         let earned = 0;
 
         if (outcome === 'PUSH') {
-          earned = 0;
+          earned = isPreMatch ? 0 : 8; // Award 8 tokens for predicting a tie
           player.history.push({
             questionId: room.currentQuestionId,
             questionText: question?.text,
@@ -865,10 +972,10 @@ io.on('connection', (socket) => {
             useGoldenGoal: !!sub.useGoldenGoal,
             useSilverGoal: !!sub.useSilverGoal,
             outcome: 'PUSH',
-            tokensEarned: 0,
+            tokensEarned: earned,
             participationTokens: partReward
           });
-          player.fanTokens += partReward;
+          player.fanTokens += earned + partReward;
         } else {
           const isCorrect = sub.prediction === outcome;
           if (isCorrect) {
@@ -1031,7 +1138,7 @@ io.on('connection', (socket) => {
 
     room.submissions = {};
     syncDb();
-    
+
     io.to(roomId).emit('state-sync', {
       gameState: room.gameState,
       currentQuestionId: room.currentQuestionId,
@@ -1041,7 +1148,7 @@ io.on('connection', (socket) => {
       timerSecondsRemaining: room.timerSecondsRemaining,
       submittedPlayerIds: []
     });
-    
+
     callback?.({ success: true });
   });
 
@@ -1096,7 +1203,7 @@ io.on('connection', (socket) => {
         player.misses++;
         player.currentStreak = 0;
         player.fanTokens += partReward;
-        
+
         player.history.push({
           questionId: room.currentQuestionId,
           questionText: question?.text,
@@ -1113,7 +1220,8 @@ io.on('connection', (socket) => {
       player.matchesPlayed++;
 
       if (outcome === 'PUSH') {
-        player.fanTokens += partReward;
+        const earned = isPreMatch ? 0 : 8; // Award 8 tokens for predicting a tie
+        player.fanTokens += earned + partReward;
         player.history.push({
           questionId: room.currentQuestionId,
           questionText: question?.text,
@@ -1122,7 +1230,7 @@ io.on('connection', (socket) => {
           useGoldenGoal: !!sub.useGoldenGoal,
           useSilverGoal: !!sub.useSilverGoal,
           outcome: 'PUSH',
-          tokensEarned: 0,
+          tokensEarned: earned,
           participationTokens: partReward
         });
       } else {
@@ -1229,7 +1337,7 @@ io.on('connection', (socket) => {
     if (room.activeTimer) {
       clearInterval(room.activeTimer);
     }
-    
+
     room.activeTimer = setInterval(() => {
       const liveRoom = getRoomById(room.id);
       if (!liveRoom || liveRoom.gameState !== 'AUCTION_DROPPING') {
@@ -1237,7 +1345,7 @@ io.on('connection', (socket) => {
         if (liveRoom) liveRoom.activeTimer = null;
         return;
       }
-      
+
       if (liveRoom.currentBid > 10) {
         liveRoom.currentBid = Math.max(10, liveRoom.currentBid - 5);
         io.to(liveRoom.id).emit('auction-price-update', {
@@ -1566,7 +1674,7 @@ io.on('connection', (socket) => {
       const earned = isCorrect ? 50 : 10;
       player.fanTokens += earned;
       player.matchesPlayed++;
-      
+
       player.history.push({
         questionId: room.currentQuestionId,
         questionText: question.text,
@@ -1669,6 +1777,38 @@ io.on('connection', (socket) => {
       timerSecondsRemaining: 0
     });
     io.to(roomId).emit('standings-update', []);
+    callback?.({ success: true });
+  });
+
+  // Fetch all player accounts for PIN recovery
+  socket.on('admin-get-accounts', ({ roomId }, callback) => {
+    const accounts = Object.values(dbInMemory.accounts || {}).map(acc => ({
+      username: acc.username,
+      pin: acc.pin
+    }));
+    callback?.({ success: true, accounts });
+  });
+
+  // Fetch registered admin usernames
+  socket.on('admin-get-organizers', ({ roomId }, callback) => {
+    const organizers = Object.keys(dbInMemory.organizers || {});
+    callback?.({ success: true, organizers });
+  });
+
+  // Update a player's PIN
+  socket.on('admin-update-player-pin', ({ roomId, username, newPin }, callback) => {
+    if (!username || !newPin) {
+      return callback?.({ success: false, error: 'Missing parameters.' });
+    }
+    const normalized = username.trim().toLowerCase();
+    if (!dbInMemory.accounts || !dbInMemory.accounts[normalized]) {
+      return callback?.({ success: false, error: 'Account not found.' });
+    }
+    if (!/^\d{4}$/.test(newPin)) {
+      return callback?.({ success: false, error: 'PIN must be exactly 4 digits.' });
+    }
+    dbInMemory.accounts[normalized].pin = newPin;
+    syncDb();
     callback?.({ success: true });
   });
 

@@ -38,7 +38,7 @@ function PlayerView({ socket, playerId, gameState, standings, roomId, roomName, 
 
   // Auto-join if nickname is in localStorage
   useEffect(() => {
-    const savedName = localStorage.getItem('python_wc_player_name');
+    const savedName = localStorage.getItem('python_wc_player_username') || localStorage.getItem('python_wc_player_name');
     if (savedName && playerId) {
       setNickname(savedName);
       handleJoin(savedName);
