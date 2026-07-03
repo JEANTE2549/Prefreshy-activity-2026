@@ -55,12 +55,140 @@ function ProjectorView({ socket, gameState, standings, roomId, roomName, adminMo
 
   const renderAuctionMode = () => {
     const currentPrice = gameState.currentBid || 10;
-    const sortedActiveStandings = [...standings].sort((a, b) => b.fanTokens - a.fanTokens);
     const activeQuestion = gameState.activeQuestion;
     const isAnswering = gameState.gameState === 'AUCTION_ANSWERING' || gameState.gameState === 'AUCTION_ANSWERED';
+    
+    const groupsList = Object.values(gameState.groups || {
+      "A": { id: "A", name: "Team A", playerIds: [], tokens: 100, itemsWon: [] },
+      "B": { id: "B", name: "Team B", playerIds: [], tokens: 100, itemsWon: [] },
+      "C": { id: "C", name: "Team C", playerIds: [], tokens: 100, itemsWon: [] }
+    });
+    const sortedGroups = [...groupsList].sort((a, b) => b.tokens - a.tokens);
+
+    if (gameState.gameState === 'AUCTION_END') {
+      const first = sortedGroups[0];
+      const second = sortedGroups[1];
+      const third = sortedGroups[2];
+
+      const renderPodiumColumn = (group, rank) => {
+        if (!group) return null;
+        let colHeight = '180px';
+        let badge = '🥉';
+        let colColor = 'rgba(205, 127, 50, 0.15)';
+        let borderColor = '#cd7f32';
+        
+        if (rank === 1) {
+          colHeight = '320px';
+          badge = '🥇';
+          colColor = 'rgba(255, 215, 0, 0.15)';
+          borderColor = 'var(--gold-trophy)';
+        } else if (rank === 2) {
+          colHeight = '240px';
+          badge = '🥈';
+          colColor = 'rgba(192, 192, 192, 0.15)';
+          borderColor = '#c0c0c0';
+        }
+
+        return (
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', width: '30%', minWidth: '220px', transition: 'all 0.5s ease-in-out' }}>
+            <div style={{ textAlign: 'center', marginBottom: '15px' }}>
+              <span style={{ fontSize: '32px' }}>{badge}</span>
+              <h2 style={{ fontSize: '22px', fontWeight: '950', color: '#fff', margin: '5px 0' }}>{group.name}</h2>
+              <strong style={{ fontSize: '28px', color: '#fff', textShadow: '0 0 10px rgba(255,255,255,0.4)', fontFamily: 'monospace' }}>
+                {group.tokens} <span style={{ fontSize: '16px' }}>🪙</span>
+              </strong>
+            </div>
+
+            <div style={{
+              height: colHeight,
+              width: '100%',
+              background: `linear-gradient(to top, ${colColor}, rgba(0,0,0,0.4))`,
+              border: `2px solid ${borderColor}`,
+              boxShadow: `0 0 30px ${borderColor}44`,
+              borderRadius: '20px 20px 0 0',
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              padding: '20px',
+              gap: '15px',
+              justifyContent: 'flex-start'
+            }}>
+              <span style={{ fontSize: '11px', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '1px', borderBottom: '1px solid var(--glass-border)', width: '100%', paddingBottom: '6px', textAlign: 'center' }}>
+                Inventory
+              </span>
+              
+              <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', justifyContent: 'center', width: '100%' }}>
+                {(group.itemsWon || []).map((itm, idx) => {
+                  const isOpened = itm.startsWith('OPENED:');
+                  const val = isOpened ? itm.split(':')[1] : null;
+                  return (
+                    <div
+                      key={idx}
+                      onClick={() => {
+                        if (adminMode && !isOpened) {
+                          socket.emit('admin-reveal-team-item', { roomId, adminToken, teamId: group.id, itemIdx: idx });
+                        }
+                      }}
+                      style={{
+                        padding: '8px 12px',
+                        borderRadius: '8px',
+                        background: isOpened ? (val.startsWith('+') ? 'rgba(0,230,118,0.1)' : 'rgba(255,23,68,0.1)') : 'rgba(255,215,0,0.05)',
+                        border: isOpened ? (val.startsWith('+') ? '1px solid var(--pitch-accent)' : '1px solid var(--red-card)') : '1px solid var(--gold-trophy)',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        minWidth: '50px',
+                        cursor: (adminMode && !isOpened) ? 'pointer' : 'default',
+                        animation: isOpened ? 'score-grow 0.5s ease' : 'gold-pulse 2s infinite ease-in-out'
+                      }}
+                      title={(adminMode && !isOpened) ? "Click to open mystery box" : undefined}
+                    >
+                      {isOpened ? (
+                        <strong style={{ fontSize: '15px', color: val.startsWith('+') ? 'var(--pitch-accent)' : 'var(--red-card)' }}>
+                          {val}
+                        </strong>
+                      ) : (
+                        <span style={{ fontSize: '18px' }}>🎁</span>
+                      )}
+                    </div>
+                  );
+                })}
+                {(group.itemsWon || []).length === 0 && (
+                  <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>No items</span>
+                )}
+              </div>
+            </div>
+          </div>
+        );
+      };
+
+      return (
+        <div className="app-container" style={{ maxWidth: '1400px', padding: '30px', minHeight: '95vh', display: 'flex', flexDirection: 'column', justifyContent: 'space-between', background: 'radial-gradient(circle at 50% 10%, rgba(255, 215, 0, 0.08) 0%, transparent 60%)' }}>
+          <header style={{ textAlign: 'center', marginBottom: '30px' }}>
+            <span style={{ fontSize: '14px', background: 'rgba(255,215,0,0.1)', border: '1px solid var(--gold-trophy)', padding: '6px 20px', borderRadius: '25px', color: 'var(--gold-trophy)', fontWeight: 'bold', textTransform: 'uppercase', letterSpacing: '2px', animation: 'gold-pulse 2s infinite' }}>
+              🏆 GRAND FINALE CHAMPIONSHIP 🏆
+            </span>
+            <h1 style={{ fontSize: '48px', fontWeight: '950', color: '#fff', marginTop: '15px', textTransform: 'uppercase', letterSpacing: '2px' }}>
+              Python Arena Podium
+            </h1>
+          </header>
+
+          <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'flex-end', gap: '30px', flex: 1, marginBottom: '50px' }}>
+            {renderPodiumColumn(second, 2)}
+            {renderPodiumColumn(first, 1)}
+            {renderPodiumColumn(third, 3)}
+          </div>
+
+          <div style={{ textAlign: 'center', fontSize: '12px', color: 'var(--text-muted)', fontWeight: 'bold' }}>
+            🏟️ PRE-FRESHY PYTHON WORLD CUP 2026
+          </div>
+        </div>
+      );
+    }
 
     return (
-      <div className="app-container" style={{ maxWidth: '1300px', padding: '20px', minHeight: '95vh', display: 'flex', flexDirection: 'column' }}>
+      <div className="app-container" style={{ maxWidth: '1400px', padding: '20px', minHeight: '95vh', display: 'flex', flexDirection: 'column' }}>
         
         {/* Header HUD */}
         <header className="glass-panel" style={{ padding: '15px 30px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '25px', borderTop: '3px solid #f59e0b' }}>
@@ -68,7 +196,7 @@ function ProjectorView({ socket, gameState, standings, roomId, roomName, adminMo
             <span style={{ fontSize: '32px' }}>🔨</span>
             <div>
               <h1 style={{ fontSize: '24px', fontWeight: '950', textTransform: 'uppercase', letterSpacing: '1px', color: '#fff' }}>
-                Python Dutch Auction
+                Python Traditional Auction
               </h1>
               <span style={{ fontSize: '12px', color: '#f59e0b', fontWeight: 'bold' }}>
                 {roomName} • PIN: {gameState.pin || '1127'}
@@ -78,7 +206,7 @@ function ProjectorView({ socket, gameState, standings, roomId, roomName, adminMo
           
           <div style={{ display: 'flex', gap: '15px', alignItems: 'center' }}>
             {adminMode && (
-              <button className="btn-secondary" onClick={onBackToHub} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '8px 16px', fontSize: '13px' }}>
+              <button type="button" className="btn-secondary" onClick={onBackToHub} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '8px 16px', fontSize: '13px' }}>
                 <ArrowLeft size={14} /> Back to Hub
               </button>
             )}
@@ -96,66 +224,246 @@ function ProjectorView({ socket, gameState, standings, roomId, roomName, adminMo
             
             {/* LOBBY STATE */}
             {gameState.gameState === 'LOBBY' && (
-              <div className="glass-panel" style={{ flex: 1, display: 'flex', gap: '30px', padding: '40px', alignItems: 'center', justifyContent: 'center' }}>
-                <div style={{ flex: 1, textAlign: 'center' }}>
-                  <div style={{ fontSize: '64px', marginBottom: '20px', animation: 'bounce-ball 1.5s infinite ease-in-out' }}>🔨</div>
-                  <h2 style={{ fontSize: '32px', fontWeight: '950', color: '#fff', marginBottom: '15px' }}>
-                    JOIN THE AUCTION STADIUM
-                  </h2>
-                  <p style={{ color: 'var(--text-secondary)', fontSize: '16px', maxWidth: '400px', margin: '0 auto 25px auto', lineHeight: '1.6' }}>
-                    Scan the QR code or visit the website and enter the Game PIN to register your Team.
-                  </p>
-                  <div style={{ fontSize: '24px', fontWeight: '950', background: 'rgba(245,158,11,0.1)', border: '1px solid rgba(245,158,11,0.3)', padding: '12px 30px', borderRadius: '30px', color: '#f59e0b', display: 'inline-block', letterSpacing: '1px' }}>
-                    PIN: 1127 🪙
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '20px', flex: 1 }}>
+                <div className="glass-panel" style={{ display: 'flex', gap: '30px', padding: '30px', alignItems: 'center', justifyContent: 'center' }}>
+                  <div style={{ flex: 1, textAlign: 'center' }}>
+                    <div style={{ fontSize: '64px', marginBottom: '20px', animation: 'bounce-ball 1.5s infinite ease-in-out' }}>🔨</div>
+                    <h2 style={{ fontSize: '32px', fontWeight: '950', color: '#fff', marginBottom: '15px' }}>
+                      JOIN THE AUCTION STADIUM
+                    </h2>
+                    <p style={{ color: 'var(--text-secondary)', fontSize: '16px', maxWidth: '400px', margin: '0 auto 25px auto', lineHeight: '1.6' }}>
+                      Scan the QR code or visit the website and enter the Game PIN to register your Team.
+                    </p>
+                    
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 150px', gap: '15px', width: '100%', maxWidth: '500px', margin: '0 auto' }}>
+                      <div style={{ background: 'rgba(0,0,0,0.4)', padding: '12px 15px', borderRadius: '8px', border: '1px solid var(--glass-border)', textAlign: 'left' }}>
+                        <span style={{ fontSize: '11px', color: 'var(--text-secondary)', display: 'block', fontWeight: 'bold' }}>MANUAL URL</span>
+                        <strong style={{ fontSize: '13px', color: 'var(--pitch-accent)', wordBreak: 'break-all' }}>{joinUrl}</strong>
+                      </div>
+                      
+                      <div style={{ background: 'rgba(0, 230, 118, 0.05)', padding: '12px 10px', borderRadius: '8px', border: '1px solid var(--pitch-accent-glow)', display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
+                        <span style={{ fontSize: '11px', color: 'var(--pitch-accent)', display: 'block', fontWeight: 'bold' }}>GAME PIN</span>
+                        <strong style={{ fontSize: '20px', color: '#fff', letterSpacing: '1px', fontWeight: '950' }}>{gameState.pin || '1127'}</strong>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '15px' }}>
+                    <CanvasQRCode url={joinUrl} />
+                    <span style={{ fontSize: '13px', color: 'var(--text-muted)', fontWeight: 'bold' }}>SCAN WITH PHONE</span>
                   </div>
                 </div>
 
-                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '15px' }}>
-                  <CanvasQRCode url={joinUrl} />
-                  <span style={{ fontSize: '13px', color: 'var(--text-muted)', fontWeight: 'bold' }}>SCAN WITH PHONE</span>
-                </div>
+                {/* Presenter control board for Auction */}
+                {adminMode && (
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
+                    
+                    {/* Container questions */}
+                    <div className="glass-panel" style={{ padding: '20px', background: 'rgba(0,0,0,0.2)' }}>
+                      <h3 style={{ fontSize: '16px', fontWeight: '900', color: '#f59e0b', marginBottom: '15px' }}>
+                        📦 CONTAINER ROSTER ({gameState.questions ? gameState.questions.length : 0})
+                      </h3>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '250px', overflowY: 'auto', paddingRight: '5px' }}>
+                        {(gameState.questions || []).map((q, idx) => (
+                          <div key={q.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'rgba(0,0,0,0.4)', padding: '10px 12px', borderRadius: '8px', border: '1px solid var(--glass-border)' }}>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
+                              <span style={{ fontSize: '12.5px', fontWeight: 'bold', color: '#fff' }}>
+                                Container {idx + 1}
+                              </span>
+                              <span style={{ fontSize: '10px', color: 'var(--text-muted)' }}>
+                                Items: {q.items ? q.items.length : 0}
+                              </span>
+                            </div>
+                            {q.isPlayed ? (
+                              <div style={{ display: 'flex', gap: '5px', alignItems: 'center' }}>
+                                <span style={{ fontSize: '10px', background: 'rgba(255,255,255,0.05)', color: 'var(--text-muted)', padding: '3px 8px', borderRadius: '4px' }}>
+                                  PLAYED
+                                </span>
+                                <button
+                                  type="button"
+                                  className="btn-secondary"
+                                  onClick={() => socket.emit('admin-unlock-question', { roomId, adminToken, questionId: q.id })}
+                                  style={{ padding: '3px 8px', fontSize: '10px', borderColor: 'var(--pitch-accent-glow)', color: 'var(--pitch-accent)' }}
+                                >
+                                  Unlock
+                                </button>
+                              </div>
+                            ) : (
+                              <button
+                                type="button"
+                                className="btn-primary"
+                                onClick={() => {
+                                  socket.emit('admin-start-container-auction', { roomId, adminToken, questionId: q.id }, (res) => {
+                                    if (res && !res.success) alert(res.error || 'Failed to start bidding.');
+                                  });
+                                }}
+                                style={{ padding: '6px 12px', fontSize: '11px', background: 'linear-gradient(135deg, #f59e0b 0%, #ff5252 100%)', color: '#170c00', border: 'none' }}
+                              >
+                                Bid 🔨
+                              </button>
+                            )}
+                          </div>
+                        ))}
+                        {(!gameState.questions || gameState.questions.length === 0) && (
+                          <span style={{ fontSize: '12px', color: 'var(--text-muted)', textAlign: 'center', padding: '20px 0' }}>No containers in roster</span>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* MCQ Questions & Game Control */}
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
+                      
+                      {/* MCQ Recovery List */}
+                      <div className="glass-panel" style={{ padding: '15px', background: 'rgba(0,0,0,0.2)', flex: 1 }}>
+                        <h3 style={{ fontSize: '15px', fontWeight: '900', color: '#00b0ff', marginBottom: '10px' }}>
+                          📢 RECOVERY MCQ ({gameState.mcqQuestions ? gameState.mcqQuestions.length : 0})
+                        </h3>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', maxHeight: '150px', overflowY: 'auto' }}>
+                          {(gameState.mcqQuestions || []).map((q, idx) => (
+                            <div key={q.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'rgba(0,0,0,0.4)', padding: '8px 10px', borderRadius: '6px', border: '1px solid var(--glass-border)' }}>
+                              <span style={{ fontSize: '11px', color: '#fff', textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap', maxWidth: '180px' }} title={q.text}>
+                                {idx + 1}. {q.text}
+                              </span>
+                              {q.isPlayed ? (
+                                <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
+                                  <span style={{ fontSize: '9px', background: 'rgba(255,255,255,0.05)', color: 'var(--text-muted)', padding: '2px 6px', borderRadius: '4px' }}>
+                                    PLAYED
+                                  </span>
+                                  <button
+                                    type="button"
+                                    className="btn-secondary"
+                                    onClick={() => socket.emit('admin-unlock-question', { roomId, adminToken, questionId: q.id })}
+                                    style={{ padding: '2px 6px', fontSize: '9px', borderColor: 'var(--pitch-accent-glow)', color: 'var(--pitch-accent)' }}
+                                  >
+                                    Unlock
+                                  </button>
+                                </div>
+                              ) : (
+                                <button
+                                  type="button"
+                                  className="btn-primary"
+                                  onClick={() => socket.emit('admin-start-open-question', { roomId, adminToken, questionId: q.id })}
+                                  style={{ padding: '4px 10px', fontSize: '10px', background: '#00b0ff', color: 'black', border: 'none' }}
+                                >
+                                  Launch 📢
+                                </button>
+                              )}
+                            </div>
+                          ))}
+                          {(!gameState.mcqQuestions || gameState.mcqQuestions.length === 0) && (
+                            <span style={{ fontSize: '11px', color: 'var(--text-muted)', textAlign: 'center', padding: '15px 0' }}>No recovery MCQs</span>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* General Game Actions */}
+                      <div className="glass-panel" style={{ padding: '15px', background: 'rgba(0,0,0,0.2)', display: 'flex', gap: '10px', justifyContent: 'space-between' }}>
+                        <button
+                          type="button"
+                          className="btn-primary"
+                          onClick={() => socket.emit('admin-end-auction-game', { roomId, adminToken })}
+                          style={{ flex: 1, padding: '10px', fontSize: '12px', background: 'linear-gradient(135deg, #a855f7 0%, #7c3aed 100%)', color: '#fff', border: 'none', fontWeight: 'bold' }}
+                        >
+                          🏆 End Game & View Podium
+                        </button>
+                        <button
+                          type="button"
+                          className="btn-secondary"
+                          onClick={() => {
+                            if (confirm("Reset whole auction game state? This will clear all play status and group tokens.")) {
+                              socket.emit('admin-reset-room', { roomId, adminToken });
+                            }
+                          }}
+                          style={{ padding: '10px 15px', fontSize: '12px', borderColor: 'rgba(255,23,68,0.3)', color: '#ff4d4d' }}
+                        >
+                          Reset Game 🔄
+                        </button>
+                      </div>
+
+                    </div>
+
+                  </div>
+                )}
               </div>
             )}
 
-            {/* AUCTION DROPPING STATE */}
-            {gameState.gameState === 'AUCTION_DROPPING' && (
+            {/* AUCTION_BIDDING STATE */}
+            {gameState.gameState === 'AUCTION_BIDDING' && (
               <div className="glass-panel" style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', padding: '40px', textAlign: 'center', background: 'rgba(10,15,30,0.6)' }}>
-                <span style={{ fontSize: '14px', background: 'rgba(255,23,68,0.1)', border: '1px solid rgba(255,23,68,0.3)', padding: '6px 20px', borderRadius: '25px', color: '#ff1744', fontWeight: 'bold', marginBottom: '30px', animation: 'pulse-glow 1.5s infinite' }}>
-                  ⚡ DUTCH AUCTION IN PROGRESS
+                <span style={{ fontSize: '14px', background: 'rgba(255,215,0,0.1)', border: '1px solid var(--gold-trophy)', padding: '6px 20px', borderRadius: '25px', color: 'var(--gold-trophy)', fontWeight: 'bold', marginBottom: '30px', animation: 'gold-pulse 1.5s infinite' }}>
+                  ⚡ Traditional Container Bidding Active
                 </span>
 
-                <div style={{ marginBottom: '35px' }}>
-                  <div style={{ fontSize: '16px', color: 'var(--text-secondary)', marginBottom: '10px' }}>ACTIVE ROUND DIFFICULTY</div>
-                  <div style={{
-                    fontSize: '48px',
-                    fontWeight: '950',
-                    letterSpacing: '2px',
-                    color: activeQuestion?.difficulty === 'EASY' ? '#00e676' :
-                           activeQuestion?.difficulty === 'MEDIUM' ? '#ffb300' : '#ff1744'
-                  }}>
-                    ⚽ {activeQuestion?.difficulty} MATCH
+                <div style={{ marginBottom: '35px', display: 'flex', gap: '40px' }}>
+                  <div>
+                    <div style={{ fontSize: '14px', color: 'var(--text-secondary)', marginBottom: '8px' }}>ACTIVE CONTAINER</div>
+                    <div style={{
+                      fontSize: '36px',
+                      fontWeight: '950',
+                      letterSpacing: '1px',
+                      color: '#f59e0b'
+                    }}>
+                      📦 {gameState.questions ? `Container ${gameState.questions.findIndex(q => q.id === activeQuestion?.id) + 1}` : 'Container'}
+                    </div>
+                  </div>
+
+                  <div>
+                    <div style={{ fontSize: '14px', color: 'var(--text-secondary)', marginBottom: '8px' }}>HIDDEN ITEMS</div>
+                    <div style={{ fontSize: '36px', fontWeight: '950', color: 'var(--gold-trophy)' }}>
+                      🎁 {activeQuestion?.items ? activeQuestion.items.length : 0} Boxes
+                    </div>
                   </div>
                 </div>
 
-                {/* Giant Dropping Price Board */}
                 <div style={{
                   background: 'linear-gradient(145deg, rgba(20,25,45,0.8) 0%, rgba(10,12,25,0.9) 100%)',
                   border: '3px solid #f59e0b',
                   boxShadow: '0 0 40px rgba(245,158,11,0.25)',
-                  padding: '40px 60px',
+                  padding: '30px 50px',
                   borderRadius: '24px',
                   display: 'flex',
                   flexDirection: 'column',
                   alignItems: 'center',
-                  marginBottom: '40px',
-                  minWidth: '380px'
+                  marginBottom: '20px',
+                  minWidth: '400px'
                 }}>
-                  <div style={{ fontSize: '14px', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '2px' }}>Current Snatch Price</div>
-                  <div style={{ fontSize: '96px', fontWeight: '950', color: '#f59e0b', margin: '15px 0 5px 0', fontFamily: 'monospace', letterSpacing: '-2px', textShadow: '0 0 20px rgba(245,158,11,0.5)' }}>
-                    {currentPrice} <span style={{ fontSize: '48px' }}>🪙</span>
+                  <div style={{ fontSize: '14px', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '2px' }}>Current High Bid</div>
+                  <div style={{ fontSize: '80px', fontWeight: '950', color: '#f59e0b', margin: '10px 0 5px 0', fontFamily: 'monospace', letterSpacing: '-2px', textShadow: '0 0 20px rgba(245,158,11,0.5)' }}>
+                    {currentPrice} <span style={{ fontSize: '40px' }}>🪙</span>
                   </div>
-                  <div style={{ fontSize: '13px', color: 'var(--text-muted)', fontWeight: 'bold' }}>FIRST TEAM TO BUY GETS THE QUESTION!</div>
+                  <div style={{ fontSize: '14px', color: '#fff', fontWeight: 'bold', marginTop: '10px' }}>
+                    Leader: <span style={{ color: 'var(--pitch-accent)', fontSize: '18px' }}>{gameState.highestBidder ? (gameState.groups && gameState.groups[gameState.highestBidder]?.name) : 'No bids yet'}</span>
+                  </div>
                 </div>
+
+                <div style={{ fontSize: '13px', color: 'var(--text-muted)', fontWeight: 'bold' }}>
+                  Max Caps: Easy 50 | Medium 60 | Hard 80. Reaching the cap wins immediately!
+                </div>
+
+                {adminMode && (
+                  <div style={{ marginTop: '25px', display: 'flex', gap: '15px', justifyContent: 'center', width: '100%', maxWidth: '400px' }}>
+                    <button
+                      type="button"
+                      className="btn-primary"
+                      onClick={() => socket.emit('admin-confirm-bid-winner', { roomId, adminToken })}
+                      style={{ flex: 1, padding: '12px 20px', fontSize: '14px', background: '#00e676', color: 'black', border: 'none', fontWeight: 'bold' }}
+                    >
+                      Confirm Bid Winner 🔨
+                    </button>
+                    <button
+                      type="button"
+                      className="btn-secondary"
+                      onClick={() => {
+                        if (confirm("Cancel this container bidding?")) {
+                          socket.emit('admin-cancel-bidding', { roomId, adminToken });
+                        }
+                      }}
+                      style={{ padding: '12px 20px', fontSize: '14px', borderColor: 'rgba(255,23,68,0.3)', color: '#ff4d4d' }}
+                    >
+                      Cancel Bidding ❌
+                    </button>
+                  </div>
+                )}
               </div>
             )}
 
@@ -163,11 +471,11 @@ function ProjectorView({ socket, gameState, standings, roomId, roomName, adminMo
             {isAnswering && (
               <div className="glass-panel" style={{ flex: 1, padding: '35px', display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '25px', borderBottom: '1px solid var(--glass-border)', paddingBottom: '15px' }}>
-                  <span style={{ fontSize: '14px', background: 'rgba(245, 158, 11, 0.15)', color: '#f59e0b', padding: '6px 15px', borderRadius: '25px', fontWeight: 'bold' }}>
-                    🔥 SNATCHED BY: {standings.find(p => p.id === gameState.auctionWinner)?.name} ({currentPrice} 🪙)
+                  <span style={{ fontSize: '14px', background: 'rgba(0, 230, 118, 0.15)', color: 'var(--pitch-accent)', padding: '6px 15px', borderRadius: '25px', fontWeight: 'bold' }}>
+                    📦 CONTAINER WON BY: {gameState.groups && gameState.groups[gameState.auctionWinner]?.name} ({currentPrice} 🪙)
                   </span>
                   <span style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>
-                    Status: {gameState.gameState === 'AUCTION_ANSWERED' ? 'Answer Submitted 🔒' : 'Thinking... ⏳'}
+                    Status: Verbal Answer pending...
                   </span>
                 </div>
 
@@ -175,66 +483,24 @@ function ProjectorView({ socket, gameState, standings, roomId, roomName, adminMo
                   {renderQuestionCard(activeQuestion, { fontSize: '28px', lineHeight: '1.4' })}
                 </div>
 
-                {gameState.gameState === 'AUCTION_ANSWERED' && (
-                  <div style={{ background: 'rgba(0, 176, 255, 0.1)', border: '1px solid rgba(0, 176, 255, 0.3)', padding: '15px', borderRadius: '12px', textAlign: 'center', marginTop: '20px', animation: 'pulse-glow 2s infinite' }}>
-                    <strong style={{ color: '#00b0ff', fontSize: '16px' }}>Check VAR! Referee outcome pending...</strong>
-                  </div>
-                )}
-              </div>
-            )}
-
-            {/* AUCTION REVEAL STATE */}
-            {gameState.gameState === 'AUCTION_REVEAL' && (
-              <div className="glass-panel" style={{ flex: 1, padding: '35px', display: 'flex', flexDirection: 'column', gap: '20px', justifyContent: 'center', alignItems: 'center', textAlign: 'center' }}>
-                <span style={{ fontSize: '12px', background: 'rgba(255,255,255,0.08)', padding: '4px 15px', borderRadius: '20px', color: 'var(--text-secondary)' }}>
-                  VAR REPLAY OUTCOME
-                </span>
-
-                <div style={{ maxWidth: '600px', margin: '15px 0' }}>
-                  <h3 style={{ fontSize: '22px', color: 'var(--text-muted)', marginBottom: '10px' }}>{activeQuestion?.text}</h3>
-                  <div style={{ fontSize: '15px', color: 'var(--text-secondary)' }}>
-                    Correct Answer: <strong style={{ color: 'var(--pitch-accent)', fontSize: '18px' }}>{gameState.lastResults?.correctAnswer}</strong>
-                  </div>
-                  <div style={{ fontSize: '15px', color: 'var(--text-secondary)', marginTop: '4px' }}>
-                    {standings.find(p => p.id === gameState.lastResults?.winnerId)?.name}'s Answer: <strong style={{ color: gameState.lastResults?.isCorrect ? 'var(--pitch-accent)' : 'var(--red-card)', fontSize: '18px' }}>{gameState.lastResults?.submittedAnswer || 'None'}</strong>
-                  </div>
-                </div>
-
-                <div style={{
-                  background: gameState.lastResults?.isCorrect ? 'rgba(0, 230, 118, 0.15)' : 'rgba(255, 23, 68, 0.15)',
-                  border: gameState.lastResults?.isCorrect ? '2px solid var(--pitch-accent)' : '2px solid var(--red-card)',
-                  boxShadow: gameState.lastResults?.isCorrect ? '0 0 30px rgba(0, 230, 118, 0.2)' : '0 0 30px rgba(255, 23, 68, 0.2)',
-                  padding: '30px 50px',
-                  borderRadius: '20px',
-                  animation: 'pulse-glow 2s infinite',
-                  maxWidth: '500px',
-                  width: '100%'
-                }}>
-                  {gameState.lastResults?.isCorrect ? (
-                    <div>
-                      <h2 style={{ fontSize: '48px', fontWeight: '950', color: 'var(--pitch-accent)', letterSpacing: '2px' }}>
-                        ⚽ GOAL! (CORRECT)
-                      </h2>
-                      <p style={{ color: 'var(--text-secondary)', fontSize: '15px', marginTop: '10px' }}>
-                        <strong>Refunded Bid:</strong> +{gameState.lastResults?.price} Tokens <br />
-                        <strong>Difficulty Bonus:</strong> +{gameState.lastResults?.bonus} Tokens
-                      </p>
-                    </div>
-                  ) : (
-                    <div>
-                      <h2 style={{ fontSize: '48px', fontWeight: '950', color: 'var(--red-card)', letterSpacing: '2px' }}>
-                        ❌ MISS! (INCORRECT)
-                      </h2>
-                      <p style={{ color: 'var(--text-secondary)', fontSize: '15px', marginTop: '10px' }}>
-                        <strong>Purchase Bid lost:</strong> -{gameState.lastResults?.price} Tokens
-                      </p>
-                    </div>
-                  )}
-                </div>
-
-                {gameState.lastResults?.bankruptcyAlert && (
-                  <div style={{ background: 'rgba(255, 179, 0, 0.1)', border: '1px solid #ffb300', padding: '15px 30px', borderRadius: '12px', color: '#ffb300', fontWeight: 'bold', fontSize: '15px', marginTop: '10px', display: 'flex', alignItems: 'center', gap: '10px' }}>
-                    ⚠️ BANKRUPT ALERT! A team has hit 0 tokens. Triggering Open Question next!
+                {adminMode && (
+                  <div style={{ marginTop: '30px', display: 'flex', gap: '15px', justifyContent: 'center', maxWidth: '600px', width: '100%', margin: '30px auto 0 auto' }}>
+                    <button
+                      type="button"
+                      className="btn-primary"
+                      onClick={() => socket.emit('admin-reveal-auction-result', { roomId, adminToken, isCorrect: true })}
+                      style={{ flex: 1, padding: '12px 25px', fontSize: '14px', background: '#00e676', color: 'black', border: 'none', fontWeight: 'bold' }}
+                    >
+                      Correct (Refund + Bonus + Items) ✅
+                    </button>
+                    <button
+                      type="button"
+                      className="btn-secondary"
+                      onClick={() => socket.emit('admin-reveal-auction-result', { roomId, adminToken, isCorrect: false })}
+                      style={{ flex: 1, padding: '12px 25px', fontSize: '14px', borderColor: 'var(--red-card)', color: 'var(--red-card)', fontWeight: 'bold' }}
+                    >
+                      Incorrect (Deduct Tokens) ❌
+                    </button>
                   </div>
                 )}
               </div>
@@ -245,24 +511,13 @@ function ProjectorView({ socket, gameState, standings, roomId, roomName, adminMo
               <div className="glass-panel" style={{ flex: 1, padding: '35px', display: 'flex', flexDirection: 'column' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '25px', borderBottom: '1px solid var(--glass-border)', paddingBottom: '15px' }}>
                   <span style={{ fontSize: '14px', background: 'rgba(0, 176, 255, 0.15)', color: '#00b0ff', padding: '6px 15px', borderRadius: '25px', fontWeight: 'bold' }}>
-                    📢 OPEN QUESTION ROUND (ALL TEAMS SUBMIT)
+                    📢 RECOVERY ROUND (ALL TEAMS SUBMIT)
                   </span>
-                  
-                  {/* Progress Bar of Submissions */}
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                    <span style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>
-                      Locked: <strong>{gameState.submissionsCount} / {standings.length}</strong>
-                    </span>
-                    <div style={{ width: '120px', height: '8px', background: 'rgba(255,255,255,0.05)', borderRadius: '4px', overflow: 'hidden' }}>
-                      <div style={{ width: `${standings.length > 0 ? (gameState.submissionsCount / standings.length) * 100 : 0}%`, height: '100%', background: '#00b0ff', transition: 'width 0.3s ease' }}></div>
-                    </div>
-                  </div>
                 </div>
 
                 <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
                   {renderQuestionCard(activeQuestion, { fontSize: '28px', lineHeight: '1.4' })}
                   
-                  {/* Options List */}
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '15px', marginTop: '30px', maxWidth: '800px', margin: '30px auto 0 auto', width: '100%' }}>
                     {(activeQuestion?.options || []).map((opt, idx) => {
                       const letter = String.fromCharCode(65 + idx);
@@ -275,6 +530,19 @@ function ProjectorView({ socket, gameState, standings, roomId, roomName, adminMo
                     })}
                   </div>
                 </div>
+
+                {adminMode && (
+                  <div style={{ marginTop: '30px', textAlign: 'center' }}>
+                    <button
+                      type="button"
+                      className="btn-primary"
+                      onClick={() => socket.emit('admin-reveal-open-results', { roomId, adminToken })}
+                      style={{ padding: '12px 30px', fontSize: '15px', background: 'linear-gradient(135deg, #00b0ff 0%, #0080ff 100%)', color: 'black', border: 'none', fontWeight: 'bold' }}
+                    >
+                      Reveal Results 📢
+                    </button>
+                  </div>
+                )}
               </div>
             )}
 
@@ -292,48 +560,18 @@ function ProjectorView({ socket, gameState, standings, roomId, roomName, adminMo
                   </div>
                 </div>
 
-                {/* Team Answers Reveal: Suspense Flip Card */}
-                <div style={{ width: '100%', maxWidth: '600px', display: 'flex', flexDirection: 'column', gap: '12px', marginTop: '10px' }}>
-                  <div style={{ fontSize: '13px', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '5px' }}>
-                    Reveal (Lowest Tokens First)
+                {adminMode && (
+                  <div style={{ marginTop: '20px' }}>
+                    <button
+                      type="button"
+                      className="btn-primary"
+                      onClick={() => socket.emit('admin-next-auction-match', { roomId, adminToken })}
+                      style={{ padding: '12px 30px', fontSize: '15px', background: '#00e676', color: 'black', border: 'none', fontWeight: 'bold' }}
+                    >
+                      Next Match (Back to Lobby) ⚽
+                    </button>
                   </div>
-                  
-                  {/* Sort teams by tokens *before* open question payout (meaning: sort current standings ascending) */}
-                  {[...standings].sort((a, b) => a.fanTokens - b.fanTokens).map((p) => {
-                    const sub = gameState.lastResults?.submissions[p.id];
-                    const isCorrect = sub?.answer === gameState.lastResults?.correctAnswer;
-                    
-                    return (
-                      <div
-                        key={p.id}
-                        style={{
-                          display: 'flex',
-                          justifyContent: 'space-between',
-                          alignItems: 'center',
-                          padding: '15px 25px',
-                          background: isCorrect ? 'rgba(0, 230, 118, 0.08)' : 'rgba(255, 179, 0, 0.08)',
-                          border: `1px solid ${isCorrect ? 'var(--pitch-accent)' : '#ffb300'}`,
-                          borderRadius: '12px',
-                          boxShadow: '0 4px 15px rgba(0,0,0,0.1)'
-                        }}
-                      >
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '15px' }}>
-                          <span style={{ fontSize: '20px' }}>{isCorrect ? '✅' : '❌'}</span>
-                          <div style={{ textAlign: 'left' }}>
-                            <strong style={{ fontSize: '16px', color: '#fff' }}>{p.name}</strong>
-                            <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
-                              Selected: Option {sub?.answer || 'NONE'}
-                            </div>
-                          </div>
-                        </div>
-
-                        <div style={{ fontSize: '18px', fontWeight: '950', color: isCorrect ? 'var(--pitch-accent)' : '#ffb300' }}>
-                          {isCorrect ? '+50 🪙' : '+10 🪙'}
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
+                )}
               </div>
             )}
 
@@ -350,31 +588,31 @@ function ProjectorView({ socket, gameState, standings, roomId, roomName, adminMo
                 <thead>
                   <tr style={{ borderBottom: '1px solid var(--glass-border)', fontSize: '12px', color: 'var(--text-secondary)' }}>
                     <th style={{ textAlign: 'left', paddingBottom: '8px', width: '60px' }}>RANK</th>
-                    <th style={{ textAlign: 'left', paddingBottom: '8px' }}>PLAYER</th>
+                    <th style={{ textAlign: 'left', paddingBottom: '8px' }}>TEAM</th>
                     <th style={{ textAlign: 'right', paddingBottom: '8px' }}>TOKENS</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {sortedActiveStandings.map((p) => {
-                    let rankText = p.currentRank;
-                    if (p.currentRank === 1) rankText = '🥇';
-                    else if (p.currentRank === 2) rankText = '🥈';
-                    else if (p.currentRank === 3) rankText = '🥉';
+                  {sortedGroups.map((g, idx) => {
+                    let rankText = (idx + 1).toString();
+                    if (idx === 0) rankText = '🥇';
+                    else if (idx === 1) rankText = '🥈';
+                    else if (idx === 2) rankText = '🥉';
                     
                     return (
-                      <tr key={p.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.03)' }}>
+                      <tr key={g.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.03)' }}>
                         <td style={{ padding: '12px 0', fontWeight: 'bold', fontSize: '15px' }}>{rankText}</td>
-                        <td style={{ padding: '12px 0', fontWeight: 'bold', fontSize: '15px' }}>{p.name}</td>
+                        <td style={{ padding: '12px 0', fontWeight: 'bold', fontSize: '15px' }}>{g.name}</td>
                         <td className="gold-token" style={{ padding: '12px 0', textAlign: 'right', fontWeight: 'bold', fontSize: '15px' }}>
-                          {p.fanTokens} 🪙
+                          {g.tokens} 🪙
                         </td>
                       </tr>
                     );
                   })}
-                  {sortedActiveStandings.length === 0 && (
+                  {sortedGroups.length === 0 && (
                     <tr>
                       <td colSpan={3} style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '20px 0' }}>
-                        No teams registered
+                        No groups configured
                       </td>
                     </tr>
                   )}
@@ -382,7 +620,6 @@ function ProjectorView({ socket, gameState, standings, roomId, roomName, adminMo
               </table>
             </div>
             
-            {/* Logo placeholder */}
             <div style={{ borderTop: '1px solid var(--glass-border)', paddingTop: '15px', textAlign: 'center', fontSize: '11px', color: 'var(--text-muted)', fontWeight: 'bold' }}>
               🏟️ PYTHON WORLD CUP ARENA
             </div>
@@ -398,13 +635,8 @@ function ProjectorView({ socket, gameState, standings, roomId, roomName, adminMo
     return renderAuctionMode();
   }
 
-  // Sort questions by difficulty weights (PRE-MATCH -> EASY -> MEDIUM -> HARD) for lobby presentation
-  const sortedQuestions = gameState.questions ? [...gameState.questions].sort((a, b) => {
-    const diffWeights = { 'PRE-MATCH': 0, 'EASY': 1, 'MEDIUM': 2, 'HARD': 3 };
-    const weightA = diffWeights[a.difficulty] !== undefined ? diffWeights[a.difficulty] : 2;
-    const weightB = diffWeights[b.difficulty] !== undefined ? diffWeights[b.difficulty] : 2;
-    return weightA - weightB;
-  }) : [];
+  // Do not sort questions, keep database order
+  const sortedQuestions = gameState.questions || [];
 
   // Helper to render customized layout with alignment checker
   const renderQuestionCard = (q, textStyle = {}) => {
@@ -575,9 +807,19 @@ function ProjectorView({ socket, gameState, standings, roomId, roomName, adminMo
                         Match {idx + 1}
                       </span>
                       {q.isPlayed ? (
-                        <span style={{ fontSize: '12px', background: 'rgba(255,255,255,0.05)', color: 'var(--text-muted)', padding: '4px 10px', borderRadius: '4px', border: '1px solid var(--glass-border)', fontWeight: 'bold' }}>
-                          PLAYED 🔒
-                        </span>
+                        <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+                          <span style={{ fontSize: '12px', background: 'rgba(255,255,255,0.05)', color: 'var(--text-muted)', padding: '4px 10px', borderRadius: '4px', border: '1px solid var(--glass-border)', fontWeight: 'bold' }}>
+                            PLAYED 🔒
+                          </span>
+                          <button
+                            type="button"
+                            className="btn-secondary"
+                            onClick={() => socket.emit('admin-unlock-question', { roomId, adminToken, questionId: q.id })}
+                            style={{ padding: '4px 10px', fontSize: '11px', borderColor: 'var(--pitch-accent-glow)', color: 'var(--pitch-accent)' }}
+                          >
+                            Unlock
+                          </button>
+                        </div>
                       ) : (
                         <button 
                           className="btn-primary" 

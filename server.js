@@ -55,6 +55,11 @@ async function initDb() {
 
     let db = data ? data.value : {};
 
+    adminSessions.clear();
+    if (db.adminSessions && Array.isArray(db.adminSessions)) {
+      db.adminSessions.forEach(t => adminSessions.add(t));
+    }
+
     // Run schema migrations/setup if empty
     if (!db.adminPassword) db.adminPassword = '1234';
     if (!db.organizers) db.organizers = { "admin": "admin", "Jean": "J2710" };
@@ -261,7 +266,12 @@ async function initDb() {
         openQuestions: r.openQuestions || [],
         currentBid: r.currentBid || 10,
         highestBidder: r.highestBidder || null,
-        auctionWinner: r.auctionWinner || null
+        auctionWinner: r.auctionWinner || null,
+        groups: r.groups || {
+          "A": { id: "A", name: "Team A", playerIds: [], tokens: 100, itemsWon: [] },
+          "B": { id: "B", name: "Team B", playerIds: [], tokens: 100, itemsWon: [] },
+          "C": { id: "C", name: "Team C", playerIds: [], tokens: 100, itemsWon: [] }
+        }
       };
     });
 
@@ -279,6 +289,7 @@ async function saveDbToSupabase() {
       adminPassword: dbInMemory.adminPassword || '1234',
       organizers: dbInMemory.organizers || { "admin": "admin", "Jean": "J2710" },
       accounts: dbInMemory.accounts || {},
+      adminSessions: Array.from(adminSessions),
       rooms: {}
     };
 
@@ -299,7 +310,8 @@ async function saveDbToSupabase() {
         openQuestions: r.openQuestions || [],
         currentBid: r.currentBid || 10,
         highestBidder: r.highestBidder || null,
-        auctionWinner: r.auctionWinner || null
+        auctionWinner: r.auctionWinner || null,
+        groups: r.groups || null
       };
     });
 
@@ -327,11 +339,46 @@ function syncDb() {
 }
 
 // Helpers
+function syncAuctionPlayers() {
+  const predictionRoom = roomsState.prediction;
+  const auctionRoom = roomsState.auction;
+  if (!predictionRoom || !auctionRoom || !predictionRoom.players || !auctionRoom.players) return;
+
+  Object.keys(predictionRoom.players).forEach(pId => {
+    const predPlayer = predictionRoom.players[pId];
+    if (!predPlayer) return;
+
+    if (!auctionRoom.players[pId]) {
+      auctionRoom.players[pId] = {
+        id: predPlayer.id,
+        name: predPlayer.name,
+        fanTokens: predPlayer.fanTokens,
+        prevRank: predPlayer.currentRank || 1,
+        currentRank: predPlayer.currentRank || 1,
+        currentStreak: 0,
+        bestStreak: 0,
+        matchesPlayed: 0,
+        goals: 0,
+        misses: 0,
+        goldenGoalAvailable: true,
+        silverGoalAvailable: true,
+        history: []
+      };
+    } else if (auctionRoom.gameState === 'LOBBY') {
+      // Sync token changes from prediction if auction hasn't started yet
+      auctionRoom.players[pId].fanTokens = predPlayer.fanTokens;
+    }
+  });
+}
+
 function getRoomByPin(pin) {
   return Object.values(roomsState).find(r => r.pin === pin) || null;
 }
 
 function getRoomById(id) {
+  if (id === 'auction') {
+    syncAuctionPlayers();
+  }
   return roomsState[id] || null;
 }
 
@@ -650,7 +697,8 @@ io.on('connection', (socket) => {
       submittedPlayerIds: Object.keys(room.submissions),
       questions: room.questions,
       standings: getSortedPlayers(room),
-      pin: room.pin
+      pin: room.pin,
+      groups: room.groups
     });
   });
 
@@ -1810,6 +1858,279 @@ io.on('connection', (socket) => {
     dbInMemory.accounts[normalized].pin = newPin;
     syncDb();
     callback?.({ success: true });
+  });
+
+  // Save custom group layout
+  socket.on('admin-save-groups', ({ roomId, groups }, callback) => {
+    const room = getRoomById(roomId);
+    if (!room) return callback?.({ success: false, error: 'Room not found.' });
+    room.groups = groups;
+    syncDb();
+    io.to(roomId).emit('groups-update', room.groups);
+    callback?.({ success: true });
+  });
+
+  // Autofill players into balanced groups
+  socket.on('admin-autofill-groups', ({ roomId }, callback) => {
+    const room = getRoomById(roomId);
+    if (!room) return callback?.({ success: false, error: 'Room not found.' });
+
+    const activePlayers = Object.values(room.players);
+    const sorted = [...activePlayers].sort((a, b) => b.fanTokens - a.fanTokens);
+
+    const groups = {
+      "A": { id: "A", name: "Team A", playerIds: [], tokens: 0, itemsWon: [] },
+      "B": { id: "B", name: "Team B", playerIds: [], tokens: 0, itemsWon: [] },
+      "C": { id: "C", name: "Team C", playerIds: [], tokens: 0, itemsWon: [] }
+    };
+
+    sorted.forEach(player => {
+      const lowestGroup = Object.values(groups).reduce((minG, g) => {
+        if (!minG) return g;
+        return g.tokens < minG.tokens ? g : minG;
+      }, null);
+
+      lowestGroup.playerIds.push(player.id);
+      lowestGroup.tokens += player.fanTokens;
+    });
+
+    Object.values(groups).forEach(g => {
+      if (g.playerIds.length === 0) {
+        g.tokens = 100;
+      }
+    });
+
+    room.groups = groups;
+    syncDb();
+    io.to(roomId).emit('groups-update', room.groups);
+    callback?.({ success: true, groups: room.groups });
+  });
+
+  // Start Traditional Bidding on a Container
+  socket.on('admin-start-container-auction', ({ roomId, questionId }, callback) => {
+    const room = getRoomById(roomId);
+    if (!room) return callback?.({ success: false, error: 'Room not found.' });
+
+    const question = room.questions.find(q => q.id === questionId);
+    if (!question) return callback?.({ success: false, error: 'Container not found.' });
+
+    room.currentQuestionId = questionId;
+    room.gameState = 'AUCTION_BIDDING';
+    room.currentBid = 10;
+    room.highestBidder = null;
+    room.submissions = {};
+    syncDb();
+
+    io.to(roomId).emit('state-sync', {
+      gameState: room.gameState,
+      currentQuestionId: questionId,
+      activeQuestion: question,
+      currentBid: room.currentBid,
+      highestBidder: null,
+      submissionsCount: 0,
+      groups: room.groups
+    });
+    callback?.({ success: true });
+  });
+
+  // Submit Bid increment (+5 tokens)
+  socket.on('submit-bid', ({ roomId, teamId }, callback) => {
+    const room = getRoomById(roomId);
+    if (!room) return callback?.({ success: false, error: 'Room not found.' });
+
+    if (room.gameState !== 'AUCTION_BIDDING') {
+      return callback?.({ success: false, error: 'Bidding is not active.' });
+    }
+
+    const team = room.groups && room.groups[teamId];
+    if (!team) return callback?.({ success: false, error: 'Team not found.' });
+
+    const nextBid = room.currentBid + 5;
+    if (team.tokens < nextBid) {
+      return callback?.({ success: false, error: 'Not enough tokens in team pool!' });
+    }
+
+    const question = room.questions.find(q => q.id === room.currentQuestionId);
+    if (!question) return callback?.({ success: false, error: 'Active container not found.' });
+
+    let cap = 50;
+    if (question.difficulty === 'MEDIUM') cap = 60;
+    else if (question.difficulty === 'HARD') cap = 80;
+
+    if (nextBid > cap) {
+      return callback?.({ success: false, error: `Bid exceeds difficulty cap of ${cap} tokens.` });
+    }
+
+    room.currentBid = nextBid;
+    room.highestBidder = teamId;
+    syncDb();
+
+    io.to(roomId).emit('bid-updated', {
+      currentBid: room.currentBid,
+      highestBidder: room.highestBidder
+    });
+
+    if (room.currentBid === cap) {
+      room.gameState = 'AUCTION_ANSWERING';
+      room.auctionWinner = teamId;
+      team.tokens -= room.currentBid;
+      syncDb();
+
+      io.to(roomId).emit('state-sync', {
+        gameState: room.gameState,
+        currentQuestionId: room.currentQuestionId,
+        activeQuestion: question,
+        currentBid: room.currentBid,
+        highestBidder: room.highestBidder,
+        auctionWinner: room.auctionWinner,
+        groups: room.groups
+      });
+      io.to(roomId).emit('auction-won', { winnerId: teamId, price: room.currentBid });
+    }
+
+    callback?.({ success: true, bid: room.currentBid });
+  });
+
+  // Organizer manually confirms winning bid
+  socket.on('admin-confirm-bid-winner', ({ roomId }, callback) => {
+    const room = getRoomById(roomId);
+    if (!room) return callback?.({ success: false, error: 'Room not found.' });
+
+    if (room.gameState !== 'AUCTION_BIDDING') {
+      return callback?.({ success: false, error: 'Not in bidding state.' });
+    }
+
+    if (!room.highestBidder) {
+      return callback?.({ success: false, error: 'No active bids placed!' });
+    }
+
+    const winnerId = room.highestBidder;
+    const team = room.groups && room.groups[winnerId];
+    if (!team) return callback?.({ success: false, error: 'Winning team not found.' });
+
+    room.gameState = 'AUCTION_ANSWERING';
+    room.auctionWinner = winnerId;
+    team.tokens -= room.currentBid;
+    syncDb();
+
+    const question = room.questions.find(q => q.id === room.currentQuestionId);
+
+    io.to(roomId).emit('state-sync', {
+      gameState: room.gameState,
+      currentQuestionId: room.currentQuestionId,
+      activeQuestion: question,
+      currentBid: room.currentBid,
+      highestBidder: room.highestBidder,
+      auctionWinner: room.auctionWinner,
+      groups: room.groups
+    });
+    io.to(roomId).emit('auction-won', { winnerId, price: room.currentBid });
+    callback?.({ success: true });
+  });
+
+  // Organizer marks answer as correct or incorrect
+  socket.on('admin-reveal-auction-result', ({ roomId, isCorrect }, callback) => {
+    const room = getRoomById(roomId);
+    if (!room) return callback?.({ success: false, error: 'Room not found.' });
+
+    if (room.gameState !== 'AUCTION_ANSWERING' && room.gameState !== 'AUCTION_ANSWERED') {
+      return callback?.({ success: false, error: 'Not in answering phase.' });
+    }
+
+    const winnerId = room.auctionWinner;
+    const team = room.groups && room.groups[winnerId];
+    const question = room.questions.find(q => q.id === room.currentQuestionId);
+
+    if (question) {
+      question.isPlayed = true;
+    }
+
+    if (team) {
+      if (isCorrect) {
+        team.tokens += room.currentBid;
+        let bonus = 20;
+        if (question && question.difficulty === 'MEDIUM') bonus = 35;
+        else if (question && question.difficulty === 'HARD') bonus = 50;
+        team.tokens += bonus;
+
+        if (question && question.items) {
+          if (!team.itemsWon) team.itemsWon = [];
+          team.itemsWon.push(...question.items);
+        }
+      }
+    }
+
+    room.gameState = 'LOBBY';
+    room.currentQuestionId = null;
+    room.auctionWinner = null;
+    room.highestBidder = null;
+    room.submissions = {};
+    syncDb();
+
+    let triggerRecovery = false;
+    if (room.groups) {
+      Object.values(room.groups).forEach(g => {
+        if (g.tokens < 20) {
+          triggerRecovery = true;
+        }
+      });
+    }
+
+    io.to(roomId).emit('state-sync', {
+      gameState: 'LOBBY',
+      currentQuestionId: null,
+      activeQuestion: null,
+      submissionsCount: 0,
+      config: room.config,
+      timerSecondsRemaining: 0,
+      groups: room.groups,
+      triggerRecovery
+    });
+
+    callback?.({ success: true });
+  });
+
+  // End Game and enter Podium View
+  socket.on('admin-end-auction-game', ({ roomId }, callback) => {
+    const room = getRoomById(roomId);
+    if (!room) return callback?.({ success: false, error: 'Room not found.' });
+
+    room.gameState = 'AUCTION_END';
+    syncDb();
+
+    io.to(roomId).emit('state-sync', {
+      gameState: 'AUCTION_END',
+      currentQuestionId: null,
+      activeQuestion: null,
+      groups: room.groups
+    });
+    callback?.({ success: true });
+  });
+
+  // Reveal a single mystery item on the Podium screen
+  socket.on('admin-reveal-team-item', ({ roomId, teamId, itemIdx }, callback) => {
+    const room = getRoomById(roomId);
+    if (!room) return callback?.({ success: false, error: 'Room not found.' });
+
+    const team = room.groups && room.groups[teamId];
+    if (!team || !team.itemsWon) return callback?.({ success: false, error: 'Team or items not found.' });
+
+    const item = team.itemsWon[itemIdx];
+    if (!item) return callback?.({ success: false, error: 'Item not found.' });
+
+    const modifier = parseInt(item) || 0;
+    team.tokens += modifier;
+    team.itemsWon[itemIdx] = `OPENED:${item}`;
+    syncDb();
+
+    io.to(roomId).emit('item-revealed', {
+      teamId,
+      itemIdx,
+      item,
+      groups: room.groups
+    });
+
+    callback?.({ success: true, item });
   });
 
   socket.on('disconnect', () => {

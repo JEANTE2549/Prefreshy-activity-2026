@@ -570,6 +570,160 @@ function PlayerView({ socket, playerId, gameState, standings, roomId, roomName, 
     );
   };
 
+  const renderAuctionPlayerView = () => {
+    const myGroup = Object.values(gameState.groups || {}).find(g => g.playerIds.includes(playerId));
+    const myGroupId = myGroup ? myGroup.id : null;
+    const myGroupName = myGroup ? myGroup.name : 'No Team Assigned';
+    const myGroupTokens = myGroup ? myGroup.tokens : 100;
+
+    const currentPrice = gameState.currentBid || 10;
+    const activeQuestion = gameState.activeQuestion;
+    const isWinner = gameState.auctionWinner === myGroupId;
+    const isLeading = gameState.highestBidder === myGroupId;
+    const highestBidderName = gameState.highestBidder ? (gameState.groups && gameState.groups[gameState.highestBidder]?.name) : 'No bids';
+
+    const handlePlaceBid = () => {
+      if (!myGroupId) return alert("You are not assigned to a team yet. Ask the Organizer!");
+      socket.emit('submit-bid', { roomId, teamId: myGroupId }, (res) => {
+        if (!res.success) {
+          alert(res.error);
+        }
+      });
+    };
+
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+        
+        {/* Team Banner HUD */}
+        <div className="glass-panel" style={{ padding: '15px 20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'rgba(0, 230, 118, 0.05)', border: '1px solid var(--pitch-accent-glow)' }}>
+          <div>
+            <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>YOUR TEAM</span>
+            <strong style={{ display: 'block', fontSize: '18px', color: 'var(--pitch-accent)' }}>{myGroupName}</strong>
+          </div>
+          <div style={{ textAlign: 'right' }}>
+            <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>TEAM BALANCE</span>
+            <strong style={{ display: 'block', fontSize: '18px', color: '#fff' }}>{myGroupTokens} 🪙</strong>
+          </div>
+        </div>
+
+        {/* LOBBY STATE */}
+        {gameState.gameState === 'LOBBY' && (
+          <div className="glass-panel" style={{ padding: '30px 20px', textAlign: 'center', display: 'flex', flexDirection: 'column', gap: '15px' }}>
+            <div style={{ fontSize: '40px', animation: 'bounce-ball 1.5s infinite ease-in-out' }}>🏟️</div>
+            <h3 style={{ fontSize: '18px', fontWeight: '800' }}>AUCTION LOBBY</h3>
+            <p style={{ color: 'var(--text-secondary)', fontSize: '13px', lineHeight: '1.4' }}>
+              Waiting for the Organizer to launch the next Container. Discuss strategies with your teammates!
+            </p>
+            {myGroup && myGroup.itemsWon && myGroup.itemsWon.length > 0 && (
+              <div style={{ borderTop: '1px solid var(--glass-border)', paddingTop: '15px', marginTop: '10px' }}>
+                <span style={{ fontSize: '11px', color: 'var(--gold-trophy)', display: 'block', marginBottom: '8px', fontWeight: 'bold' }}>🎁 YOUR TEAM INVENTORY</span>
+                <div style={{ display: 'flex', gap: '8px', justifyContent: 'center' }}>
+                  {myGroup.itemsWon.map((itm, idx) => (
+                    <span key={idx} style={{ background: 'rgba(255,215,0,0.1)', color: 'var(--gold-trophy)', padding: '4px 8px', borderRadius: '6px', fontSize: '12px', fontWeight: 'bold' }}>
+                      🎁 {itm.startsWith('OPENED:') ? itm.split(':')[1] : 'Mystery Item'}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* AUCTION_BIDDING STATE */}
+        {gameState.gameState === 'AUCTION_BIDDING' && (
+          <div className="glass-panel" style={{ padding: '25px', textAlign: 'center', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '20px' }}>
+            <span style={{ fontSize: '11px', background: 'rgba(255,215,0,0.1)', border: '1px solid var(--gold-trophy)', color: 'var(--gold-trophy)', padding: '4px 12px', borderRadius: '15px', fontWeight: 'bold' }}>
+              📦 CONTAINER BIDDING ACTIVE
+            </span>
+
+            <div style={{ display: 'flex', gap: '30px', justifyContent: 'center' }}>
+              <div>
+                <span style={{ fontSize: '11px', color: 'var(--text-secondary)', display: 'block' }}>CONTAINER</span>
+                <strong style={{ fontSize: '20px', color: 'var(--gold-trophy)' }}>
+                  {gameState.questions ? `Container ${gameState.questions.findIndex(q => q.id === activeQuestion?.id) + 1}` : 'Container'}
+                </strong>
+              </div>
+              <div>
+                <span style={{ fontSize: '11px', color: 'var(--text-secondary)', display: 'block' }}>HIDDEN ITEMS</span>
+                <strong style={{ fontSize: '20px', color: 'var(--gold-trophy)' }}>
+                  {activeQuestion?.items ? activeQuestion.items.length : 0} Boxes
+                </strong>
+              </div>
+            </div>
+
+            <div style={{ background: 'rgba(0,0,0,0.2)', width: '100%', padding: '15px 20px', borderRadius: '12px', border: '1px solid var(--glass-border)' }}>
+              <span style={{ fontSize: '12px', color: 'var(--text-secondary)', display: 'block' }}>CURRENT HIGH BID</span>
+              <strong style={{ fontSize: '36px', color: '#ffb300', fontFamily: 'monospace' }}>{currentPrice} 🪙</strong>
+              <div style={{ fontSize: '12.5px', color: '#fff', marginTop: '6px' }}>
+                Leader: <span style={{ color: isLeading ? 'var(--pitch-accent)' : 'white', fontWeight: 'bold' }}>{isLeading ? 'Your Team (Leading! ⭐)' : highestBidderName}</span>
+              </div>
+            </div>
+
+            <button
+              onClick={handlePlaceBid}
+              disabled={isLeading || myGroupTokens < (currentPrice + 5)}
+              className="btn-primary"
+              style={{
+                width: '100%',
+                padding: '16px',
+                background: isLeading ? 'rgba(255,255,255,0.05)' : 'linear-gradient(135deg, #00b0ff 0%, #00e676 100%)',
+                color: isLeading ? 'var(--text-muted)' : 'black',
+                fontWeight: 'bold',
+                fontSize: '18px',
+                border: 'none',
+                boxShadow: isLeading ? 'none' : '0 4px 15px rgba(0, 230, 118, 0.2)'
+              }}
+            >
+              {isLeading ? 'YOU HOLD HIGH BID' : `BID +5 TOKENS (Cost: ${currentPrice + 5} 🪙)`}
+            </button>
+          </div>
+        )}
+
+        {/* AUCTION_ANSWERING STATE */}
+        {(gameState.gameState === 'AUCTION_ANSWERING' || gameState.gameState === 'AUCTION_ANSWERED') && (
+          <div className="glass-panel" style={{ padding: '25px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--glass-border)', paddingBottom: '10px', marginBottom: '15px' }}>
+              <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>VERBAL ANSWER STAGE</span>
+              <span style={{ fontSize: '11px', background: isWinner ? 'rgba(0,230,118,0.1)' : 'rgba(255,255,255,0.05)', color: isWinner ? 'var(--pitch-accent)' : 'var(--text-secondary)', padding: '2px 8px', borderRadius: '4px' }}>
+                {isWinner ? 'YOUR TEAM WON' : 'OTHER TEAM WON'}
+              </span>
+            </div>
+
+            <div style={{ background: 'rgba(0,0,0,0.2)', padding: '15px', borderRadius: '8px', marginBottom: '15px' }}>
+              <div style={{ fontSize: '13px', color: 'var(--text-muted)' }}>QUESTION</div>
+              <strong style={{ display: 'block', fontSize: '15px', marginTop: '4px', color: '#fff' }}>{activeQuestion?.text}</strong>
+            </div>
+
+            {isWinner ? (
+              <div style={{ background: 'rgba(0, 230, 118, 0.05)', padding: '15px', borderRadius: '8px', border: '1px solid var(--pitch-accent-glow)', textAlign: 'center' }}>
+                <strong style={{ color: 'var(--pitch-accent)', fontSize: '15px', display: 'block' }}>⚽ ANSWER NOW!</strong>
+                <p style={{ fontSize: '13px', color: 'var(--text-secondary)', marginTop: '4px' }}>
+                  Please deliver your team's verbal answer directly to the referee/organizer.
+                </p>
+              </div>
+            ) : (
+              <div style={{ textAlign: 'center', color: 'var(--text-muted)', fontSize: '13px', padding: '10px 0' }}>
+                Wait for the winning team to deliver their verbal answer.
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* AUCTION_END STATE */}
+        {gameState.gameState === 'AUCTION_END' && (
+          <div className="glass-panel" style={{ padding: '30px 20px', textAlign: 'center', display: 'flex', flexDirection: 'column', gap: '15px' }}>
+            <div style={{ fontSize: '40px' }}>🏆</div>
+            <h3 style={{ fontSize: '18px', fontWeight: '800', color: 'var(--gold-trophy)' }}>GAME COMPLETED</h3>
+            <p style={{ color: 'var(--text-secondary)', fontSize: '13px', lineHeight: '1.4' }}>
+              The Auction is completed! Check the projector screen to see the final team standings and the grand reveal of the winner!
+            </p>
+          </div>
+        )}
+
+      </div>
+    );
+  };
+
   return (
     <div className="app-container">
       {/* HUD Header */}
@@ -618,7 +772,10 @@ function PlayerView({ socket, playerId, gameState, standings, roomId, roomName, 
       </header>
 
       {/* Main Game Interface */}
-      <main style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '20px', marginBottom: '20px' }}>
+      {roomId === 'auction' ? (
+        renderAuctionPlayerView()
+      ) : (
+        <main style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '20px', marginBottom: '20px' }}>
 
         {/* LOBBY VIEW */}
         {gameState.gameState === 'LOBBY' && (
@@ -1166,6 +1323,7 @@ function PlayerView({ socket, playerId, gameState, standings, roomId, roomName, 
           </div>
         )}
       </main>
+      )}
     </div>
   );
 }

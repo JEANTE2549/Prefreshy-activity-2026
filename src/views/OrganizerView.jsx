@@ -9,45 +9,7 @@ function OrganizerView({ socket, gameState, standings, roomId, roomName, adminTo
   const [showSettings, setShowSettings] = useState(false);
   const [editingQuestionId, setEditingQuestionId] = useState(null);
   
-  // Security & Recovery states
-  const [showRecoveryHub, setShowRecoveryHub] = useState(false);
-  const [playerAccounts, setPlayerAccounts] = useState([]);
-  const [organizersList, setOrganizersList] = useState([]);
-  const [recoverySearch, setRecoverySearch] = useState('');
-  const [editingAccount, setEditingAccount] = useState(null);
-  const [newAccountPin, setNewAccountPin] = useState('');
-
-  // Fetch security/recovery records on modal load
-  useEffect(() => {
-    if (showRecoveryHub) {
-      socket.emit('admin-get-accounts', { roomId, adminToken }, (res) => {
-        if (res.success) setPlayerAccounts(res.accounts || []);
-      });
-      socket.emit('admin-get-organizers', { roomId, adminToken }, (res) => {
-        if (res.success) setOrganizersList(res.organizers || []);
-      });
-    }
-  }, [showRecoveryHub]);
-
-  const handleUpdatePlayerPin = (username, newPin) => {
-    if (!/^\d{4}$/.test(newPin)) {
-      alert("PIN must be exactly 4 digits.");
-      return;
-    }
-    socket.emit('admin-update-player-pin', { roomId, adminToken, username, newPin }, (res) => {
-      if (res.success) {
-        alert("Player PIN updated successfully!");
-        setEditingAccount(null);
-        setNewAccountPin('');
-        // Refresh list
-        socket.emit('admin-get-accounts', { roomId, adminToken }, (r) => {
-          if (r.success) setPlayerAccounts(r.accounts || []);
-        });
-      } else {
-        alert(res.error || "Failed to update PIN.");
-      }
-    });
-  };
+  // Security & Recovery modal state has been moved globally to App.jsx.
 
   // Auction specific states
   const [showAddAuctionQuestion, setShowAddAuctionQuestion] = useState(false);
@@ -61,6 +23,7 @@ function OrganizerView({ socket, gameState, standings, roomId, roomName, adminTo
   const [aqImgName, setAqImgName] = useState('');
   const [aqAlign, setAqAlign] = useState('TOP');
   const [editingAqId, setEditingAqId] = useState(null);
+  const [aqItems, setAqItems] = useState([]);
 
   // Form states for Open Question
   const [oqText, setOqText] = useState('');
@@ -364,7 +327,8 @@ function OrganizerView({ socket, gameState, standings, roomId, roomName, adminTo
         correctAnswer: aqCorrect.trim(),
         imageUrl: uploadedUrl || (editingAqId ? updatedQuestions.find(q => q.id === editingAqId)?.imageUrl : null),
         imageAlign: aqAlign,
-        isPlayed: false
+        isPlayed: false,
+        items: aqItems
       };
 
       if (editingAqId) {
@@ -381,6 +345,7 @@ function OrganizerView({ socket, gameState, standings, roomId, roomName, adminTo
           setAqImg(null);
           setAqImgName('');
           setEditingAqId(null);
+          setAqItems([]);
         } else {
           alert(res.error || 'Failed to update auction questions.');
         }
@@ -401,6 +366,7 @@ function OrganizerView({ socket, gameState, standings, roomId, roomName, adminTo
       setAqAlign(q.imageAlign || 'TOP');
       setAqImg(null);
       setAqImgName('');
+      setAqItems(q.items || []);
       setShowAddAuctionQuestion(true);
     };
 
@@ -464,6 +430,256 @@ function OrganizerView({ socket, gameState, standings, roomId, roomName, adminTo
       }
     };
 
+    // Render Groups layout in Lobby
+    const renderLobbyGroupsManager = () => {
+      const groups = gameState.groups || {
+        "A": { id: "A", name: "Team A", playerIds: [], tokens: 100, itemsWon: [] },
+        "B": { id: "B", name: "Team B", playerIds: [], tokens: 100, itemsWon: [] },
+        "C": { id: "C", name: "Team C", playerIds: [], tokens: 100, itemsWon: [] }
+      };
+
+      const activePlayers = [...standings];
+      const unassignedPlayers = activePlayers.filter(p => {
+        return !groups.A.playerIds.includes(p.id) &&
+               !groups.B.playerIds.includes(p.id) &&
+               !groups.C.playerIds.includes(p.id);
+      });
+
+      const handleMove = (pId, gId) => {
+        const updated = JSON.parse(JSON.stringify(groups));
+        Object.values(updated).forEach(g => {
+          g.playerIds = g.playerIds.filter(id => id !== pId);
+        });
+        if (gId) {
+          updated[gId].playerIds.push(pId);
+        }
+        socket.emit('admin-save-groups', { roomId, adminToken, groups: updated });
+      };
+
+      const handleAutofill = () => {
+        socket.emit('admin-autofill-groups', { roomId, adminToken });
+      };
+
+      return (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '20px', marginTop: '10px' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <h3 style={{ fontSize: '15px', fontWeight: 'bold', color: '#f59e0b' }}>👥 Group Organizer & Balanced Auto-Fill</h3>
+            <div style={{ display: 'flex', gap: '10px' }}>
+              <button type="button" className="btn-secondary" style={{ padding: '6px 12px', fontSize: '12px' }} onClick={handleAutofill}>
+                Auto-Fill Balanced Teams
+              </button>
+              <button type="button" className="btn-primary" style={{ padding: '6px 12px', fontSize: '12px', background: 'linear-gradient(135deg, #ffd700 0%, #f59e0b 100%)', color: 'black' }} onClick={() => socket.emit('admin-end-auction-game', { roomId, adminToken })}>
+                End Game (Podium View) 🏆
+              </button>
+            </div>
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '15px' }}>
+            {Object.values(groups).map(g => (
+              <div key={g.id} className="glass-panel" style={{ padding: '15px', border: '1px solid var(--glass-border)', background: 'rgba(255,255,255,0.02)' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--glass-border)', paddingBottom: '6px', marginBottom: '10px' }}>
+                  <strong style={{ color: 'var(--pitch-accent)', fontSize: '14px' }}>{g.name}</strong>
+                  <span className="gold-token" style={{ fontSize: '13px' }}>{g.tokens} 🪙</span>
+                </div>
+                
+                {g.itemsWon && g.itemsWon.length > 0 && (
+                  <div style={{ fontSize: '11px', color: 'var(--text-secondary)', marginBottom: '10px', display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
+                    <span>Boxes won:</span>
+                    {g.itemsWon.map((itm, idx) => (
+                      <span key={idx} style={{ background: 'rgba(255,215,0,0.1)', color: 'var(--gold-trophy)', padding: '1px 4px', borderRadius: '4px', fontSize: '10px' }}>
+                        🎁 {itm.startsWith('OPENED:') ? itm.split(':')[1] : 'Hidden'}
+                      </span>
+                    ))}
+                  </div>
+                )}
+
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', minHeight: '80px' }}>
+                  {g.playerIds.map(pId => {
+                    const profile = activePlayers.find(p => p.id === pId);
+                    return (
+                      <div key={pId} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '6px 8px', background: 'rgba(0,0,0,0.2)', borderRadius: '6px', fontSize: '12px' }}>
+                        <span>{profile?.name || pId}</span>
+                        <select 
+                          value={g.id} 
+                          onChange={(e) => handleMove(pId, e.target.value)} 
+                          style={{ background: 'rgba(0,0,0,0.5)', color: '#fff', border: '1px solid var(--glass-border)', borderRadius: '4px', fontSize: '11px', padding: '2px 4px' }}
+                        >
+                          <option value="A">Team A</option>
+                          <option value="B">Team B</option>
+                          <option value="C">Team C</option>
+                          <option value="">Remove</option>
+                        </select>
+                      </div>
+                    );
+                  })}
+                  {g.playerIds.length === 0 && (
+                    <div style={{ color: 'var(--text-muted)', fontSize: '11px', textAlign: 'center', marginTop: '20px' }}>No players assigned</div>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {unassignedPlayers.length > 0 && (
+            <div className="glass-panel" style={{ padding: '15px', background: 'rgba(255,255,255,0.01)' }}>
+              <strong style={{ fontSize: '13px', display: 'block', marginBottom: '8px', color: 'var(--text-secondary)' }}>
+                🏃 Unassigned Stadium Players ({unassignedPlayers.length})
+              </strong>
+              <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                {unassignedPlayers.map(p => (
+                  <div key={p.id} style={{ display: 'flex', alignItems: 'center', gap: '6px', background: 'rgba(0,0,0,0.3)', padding: '5px 10px', borderRadius: '6px', fontSize: '12px' }}>
+                    <span>{p.name}</span>
+                    <div style={{ display: 'flex', gap: '3px' }}>
+                      <button type="button" style={{ background: 'rgba(255,255,255,0.05)', color: '#fff', border: '1px solid var(--glass-border)', padding: '2px 6px', borderRadius: '4px', cursor: 'pointer', fontSize: '10px' }} onClick={() => handleMove(p.id, 'A')}>+A</button>
+                      <button type="button" style={{ background: 'rgba(255,255,255,0.05)', color: '#fff', border: '1px solid var(--glass-border)', padding: '2px 6px', borderRadius: '4px', cursor: 'pointer', fontSize: '10px' }} onClick={() => handleMove(p.id, 'B')}>+B</button>
+                      <button type="button" style={{ background: 'rgba(255,255,255,0.05)', color: '#fff', border: '1px solid var(--glass-border)', padding: '2px 6px', borderRadius: '4px', cursor: 'pointer', fontSize: '10px' }} onClick={() => handleMove(p.id, 'C')}>+C</button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      );
+    };
+
+    // Render Bidding Stage operations
+    const renderBiddingSteward = () => {
+      const highestBidderTeam = gameState.highestBidder ? (gameState.groups && gameState.groups[gameState.highestBidder]?.name) : 'None';
+      return (
+        <div style={{ background: 'rgba(255, 179, 0, 0.05)', padding: '20px', borderRadius: '12px', border: '1px solid rgba(255, 179, 0, 0.2)' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '15px' }}>
+            <div>
+              <strong style={{ display: 'block', fontSize: '15px' }}>
+                Traditional Bidding Active: {activeQuestion?.difficulty} Container
+              </strong>
+              <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
+                Attached Items: {activeQuestion?.items ? activeQuestion.items.length : 0} Mystery boxes
+              </span>
+            </div>
+            <div style={{ textAlign: 'right' }}>
+              <div style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>ACTIVE BID</div>
+              <div style={{ fontSize: '24px', fontWeight: 'bold', color: '#ffb300' }}>{currentPrice} 🪙</div>
+            </div>
+          </div>
+
+          <div style={{ background: 'rgba(0,0,0,0.2)', padding: '12px', borderRadius: '8px', marginBottom: '20px', fontSize: '13px' }}>
+            <strong>Highest Bidder:</strong> <span style={{ color: 'var(--pitch-accent)', fontWeight: 'bold' }}>{highestBidderTeam}</span>
+          </div>
+
+          <div style={{ display: 'flex', gap: '10px' }}>
+            <button type="button" className="btn-primary" style={{ flex: 1, background: 'linear-gradient(135deg, #00b0ff 0%, #00e676 100%)', color: 'black', border: 'none' }} onClick={() => socket.emit('admin-confirm-bid-winner', { roomId, adminToken })} disabled={!gameState.highestBidder}>
+              Confirm Bid Winner 🔨
+            </button>
+            <button type="button" className="btn-secondary" style={{ borderColor: 'var(--red-card)', color: 'var(--red-card)' }} onClick={handleCloseBidding}>
+              Cancel Bidding
+            </button>
+          </div>
+        </div>
+      );
+    };
+
+    // Render Answering/Grading Stage operations
+    const renderAnsweringSteward = () => {
+      const winnerTeamName = gameState.groups && gameState.groups[gameState.auctionWinner]?.name;
+      return (
+        <div style={{ background: 'rgba(0, 230, 118, 0.05)', padding: '20px', borderRadius: '12px', border: '1px solid var(--pitch-accent-glow)' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '15px' }}>
+            <div>
+              <strong style={{ fontSize: '15px', display: 'block' }}>
+                Winner: {winnerTeamName || 'Unknown'}
+              </strong>
+              <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
+                Won Bid: {currentPrice} tokens • Verbal Answering in Progress...
+              </span>
+            </div>
+          </div>
+
+          <div style={{ background: 'rgba(0,0,0,0.2)', padding: '12px', borderRadius: '8px', marginBottom: '15px', fontSize: '13px' }}>
+            <div><strong>Question:</strong> {activeQuestion?.text}</div>
+            <div style={{ marginTop: '5px' }}><strong>Correct Answer:</strong> {activeQuestion?.correctAnswer}</div>
+            {activeQuestion?.items && activeQuestion.items.length > 0 && (
+              <div style={{ marginTop: '5px', color: 'var(--gold-trophy)' }}>
+                <strong>Attached Items:</strong> {activeQuestion.items.join(', ')}
+              </div>
+            )}
+          </div>
+
+          <div style={{ display: 'flex', gap: '10px' }}>
+            <button type="button" className="btn-primary" style={{ flex: 1, background: 'var(--pitch-accent)', color: '#07170f' }} onClick={() => socket.emit('admin-reveal-auction-result', { roomId, adminToken, isCorrect: true })}>
+              Correct (GOAL! ⚽)
+            </button>
+            <button type="button" className="btn-secondary" style={{ flex: 1, borderColor: 'var(--red-card)', color: 'var(--red-card)' }} onClick={() => socket.emit('admin-reveal-auction-result', { roomId, adminToken, isCorrect: false })}>
+              Incorrect (MISS! ❌)
+            </button>
+          </div>
+        </div>
+      );
+    };
+
+    // Render Endgame Podium item-reveal controls
+    const renderEndgamePodiumSteward = () => {
+      const groups = gameState.groups || {
+        "A": { id: "A", name: "Team A", playerIds: [], tokens: 100, itemsWon: [] },
+        "B": { id: "B", name: "Team B", playerIds: [], tokens: 100, itemsWon: [] },
+        "C": { id: "C", name: "Team C", playerIds: [], tokens: 100, itemsWon: [] }
+      };
+
+      const handleRevealItem = (tId, idx) => {
+        socket.emit('admin-reveal-team-item', { roomId, adminToken, teamId: tId, itemIdx: idx });
+      };
+
+      return (
+        <div className="glass-panel" style={{ padding: '20px', border: '2px solid var(--gold-trophy)', width: '100%' }}>
+          <h3 style={{ fontSize: '16px', fontWeight: '800', color: 'var(--gold-trophy)', marginBottom: '15px', borderBottom: '1px solid var(--glass-border)', paddingBottom: '10px' }}>
+            🏆 ENDGAME GRAND REVEAL PANEL
+          </h3>
+          <p style={{ fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '20px' }}>
+            Click on each team's unopened gift box to reveal their item and apply token modifiers in real-time.
+          </p>
+
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '15px' }}>
+            {Object.values(groups).map(g => (
+              <div key={g.id} style={{ background: 'rgba(0,0,0,0.2)', padding: '12px', borderRadius: '8px', border: '1px solid var(--glass-border)' }}>
+                <strong style={{ fontSize: '13px', display: 'block', color: '#fff', marginBottom: '8px' }}>{g.name} ({g.tokens} 🪙)</strong>
+                
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                  {(g.itemsWon || []).map((itm, idx) => {
+                    const isOpened = itm.startsWith('OPENED:');
+                    const val = isOpened ? itm.split(':')[1] : itm;
+                    return (
+                      <button
+                        key={idx}
+                        type="button"
+                        className="btn-secondary"
+                        disabled={isOpened}
+                        onClick={() => handleRevealItem(g.id, idx)}
+                        style={{
+                          padding: '6px 10px',
+                          fontSize: '11px',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          gap: '6px',
+                          borderColor: isOpened ? 'rgba(255,255,255,0.05)' : 'var(--gold-trophy)',
+                          color: isOpened ? 'var(--text-muted)' : 'var(--gold-trophy)'
+                        }}
+                      >
+                        {isOpened ? `Opened: ${val} tokens` : `🎁 Open Box #${idx + 1}`}
+                      </button>
+                    );
+                  })}
+                  {(g.itemsWon || []).length === 0 && (
+                    <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>No items collected</span>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      );
+    };
+
     return (
       <div className="app-container" style={{ maxWidth: '1200px', padding: '20px' }}>
         
@@ -478,13 +694,10 @@ function OrganizerView({ socket, gameState, standings, roomId, roomName, adminTo
           </div>
 
           <div style={{ display: 'flex', gap: '10px' }}>
-            <button className="btn-secondary" onClick={() => setShowRecoveryHub(true)} style={{ display: 'flex', alignItems: 'center', gap: '6px', color: '#60a5fa', borderColor: 'rgba(96,165,250,0.3)', padding: '8px 15px', fontSize: '12px' }}>
-              <Lock size={14} /> Security & Recovery
-            </button>
-            <button className="btn-secondary" style={{ padding: '8px 15px', fontSize: '12px' }} onClick={triggerReset}>
+            <button type="button" className="btn-secondary" style={{ padding: '8px 15px', fontSize: '12px' }} onClick={triggerReset}>
               <RefreshCw size={14} /> Full Reset
             </button>
-            <button className="btn-secondary" style={{ padding: '8px 15px', fontSize: '12px' }} onClick={onBackToHub}>
+            <button type="button" className="btn-secondary" style={{ padding: '8px 15px', fontSize: '12px' }} onClick={onBackToHub}>
               <ArrowLeft size={14} /> Return to Hub
             </button>
           </div>
@@ -508,254 +721,218 @@ function OrganizerView({ socket, gameState, standings, roomId, roomName, adminTo
           </div>
         </div>
 
-        {/* Main Interface Layout */}
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 350px', gap: '25px' }}>
-          
-          {/* Left panel: round control & question lists */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '25px' }}>
+        {gameState.gameState === 'AUCTION_END' ? (
+          renderEndgamePodiumSteward()
+        ) : (
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 350px', gap: '25px' }}>
             
-            {/* Active Control Panel */}
-            <div className="glass-panel" style={{ padding: '25px', border: '1px solid rgba(245, 158, 11, 0.2)' }}>
-              <h2 style={{ fontSize: '16px', fontWeight: '800', marginBottom: '15px', color: '#f59e0b', textTransform: 'uppercase' }}>
-                Active Round Operations
-              </h2>
+            {/* Left panel: round control & question lists */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '25px' }}>
+              
+              {/* Active Control Panel */}
+              <div className="glass-panel" style={{ padding: '25px', border: '1px solid rgba(245, 158, 11, 0.2)' }}>
+                <h2 style={{ fontSize: '16px', fontWeight: '800', marginBottom: '15px', color: '#f59e0b', textTransform: 'uppercase' }}>
+                  Active Round Operations
+                </h2>
 
-              {gameState.gameState === 'LOBBY' && (
-                <div style={{ padding: '15px', textAlign: 'center', background: 'rgba(255,255,255,0.02)', borderRadius: '8px', color: 'var(--text-secondary)', fontSize: '13px' }}>
-                  No active match. Launch an Auction or Open Question from the rosters below.
-                </div>
-              )}
+                {gameState.gameState === 'LOBBY' && renderLobbyGroupsManager()}
+                {gameState.gameState === 'AUCTION_BIDDING' && renderBiddingSteward()}
+                {gameState.gameState === 'AUCTION_ANSWERING' && renderAnsweringSteward()}
 
-              {gameState.gameState === 'AUCTION_DROPPING' && (
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'rgba(255, 179, 0, 0.05)', padding: '15px', borderRadius: '8px', border: '1px solid rgba(255, 179, 0, 0.2)' }}>
-                  <div>
-                    <strong style={{ display: 'block', fontSize: '14px' }}>Bidding Active: {activeQuestion?.difficulty} Question</strong>
-                    <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>Current Price: {currentPrice} tokens</span>
-                  </div>
-                  <button className="btn-secondary" style={{ borderColor: 'var(--red-card)', color: 'var(--red-card)' }} onClick={handleCloseBidding}>
-                    Close/Skip Round
-                  </button>
-                </div>
-              )}
-
-              {isAnswering && (
-                <div style={{ background: 'rgba(255,255,255,0.03)', padding: '20px', borderRadius: '12px', border: '1px solid var(--glass-border)' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '15px' }}>
+                {gameState.gameState === 'OPEN_QUESTION_ACTIVE' && (
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'rgba(0, 176, 255, 0.05)', padding: '15px', borderRadius: '8px', border: '1px solid rgba(0, 176, 255, 0.2)' }}>
                     <div>
-                      <strong style={{ fontSize: '15px', display: 'block' }}>
-                        Winning Team: {standings.find(p => p.id === gameState.auctionWinner)?.name || 'Unknown'}
-                      </strong>
-                      <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
-                        Bought at {currentPrice} tokens • Status: {gameState.gameState === 'AUCTION_ANSWERED' ? 'Answer Locked In 🔒' : 'Thinking... ⏳'}
-                      </span>
+                      <strong style={{ display: 'block', fontSize: '14px' }}>Open MCQ Round Active: {activeQuestion?.text}</strong>
+                      <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>Submissions: {gameState.submissionsCount} / {totalPlayers}</span>
                     </div>
-                  </div>
-
-                  <div style={{ background: 'rgba(0,0,0,0.2)', padding: '12px', borderRadius: '8px', marginBottom: '15px', fontSize: '13px' }}>
-                    <div><strong>Question:</strong> {activeQuestion?.text}</div>
-                    <div style={{ marginTop: '5px' }}><strong>Correct Answer:</strong> {activeQuestion?.correctAnswer}</div>
-                    <div style={{ marginTop: '5px', color: '#ffb300' }}>
-                      <strong>Submitted Answer:</strong> {gameState.gameState === 'AUCTION_ANSWERED' ? `"${Object.values(gameState.submissions)[0]?.answer}"` : 'Waiting for team...'}
-                    </div>
-                  </div>
-
-                  <div style={{ display: 'flex', gap: '10px' }}>
-                    <button className="btn-primary" style={{ flex: 1, background: 'var(--pitch-accent)', color: '#07170f' }} onClick={() => handleRevealAuctionResults(true)}>
-                      Verify VAR (CORRECT 👍)
+                    <button type="button" className="btn-primary" style={{ background: '#00b0ff', color: 'black' }} onClick={handleRevealOpenResults}>
+                      Reveal Results
                     </button>
-                    <button className="btn-secondary" style={{ flex: 1, borderColor: 'var(--red-card)', color: 'var(--red-card)' }} onClick={() => handleRevealAuctionResults(false)}>
-                      Verify VAR (INCORRECT 👎)
-                    </button>
-                    <button className="btn-secondary" style={{ flex: 1 }} onClick={() => handleRevealAuctionResults(null)}>
-                      Auto Grade
-                    </button>
-                  </div>
-                </div>
-              )}
-
-              {gameState.gameState === 'AUCTION_REVEAL' && (
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'rgba(0, 230, 118, 0.05)', padding: '15px', borderRadius: '8px', border: '1px solid var(--pitch-accent-glow)' }}>
-                  <div>
-                    <strong style={{ display: 'block', fontSize: '14px' }}>Reveal Active: Results displayed</strong>
-                    <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>Click next to clean up the lobby.</span>
-                  </div>
-                  <button className="btn-primary" onClick={handleNextAuctionMatch}>
-                    Next / Back to Lobby
-                  </button>
-                </div>
-              )}
-
-              {gameState.gameState === 'OPEN_QUESTION_ACTIVE' && (
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'rgba(0, 176, 255, 0.05)', padding: '15px', borderRadius: '8px', border: '1px solid rgba(0, 176, 255, 0.2)' }}>
-                  <div>
-                    <strong style={{ display: 'block', fontSize: '14px' }}>Open MCQ Round Active: {activeQuestion?.text}</strong>
-                    <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>Submissions: {gameState.submissionsCount} / {totalPlayers}</span>
-                  </div>
-                  <button className="btn-primary" style={{ background: '#00b0ff', color: 'black' }} onClick={handleRevealOpenResults}>
-                    Reveal Results
-                  </button>
-                </div>
-              )}
-
-              {gameState.gameState === 'OPEN_QUESTION_REVEAL' && (
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'rgba(0, 176, 255, 0.05)', padding: '15px', borderRadius: '8px', border: '1px solid rgba(0, 176, 255, 0.2)' }}>
-                  <div>
-                    <strong style={{ display: 'block', fontSize: '14px' }}>Open Round Results revealed</strong>
-                    <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>Click next to clean up the lobby.</span>
-                  </div>
-                  <button className="btn-primary" style={{ background: '#00b0ff', color: 'black' }} onClick={handleNextAuctionMatch}>
-                    Next / Back to Lobby
-                  </button>
-                </div>
-              )}
-
-            </div>
-
-            {/* Auction Question list */}
-            <div className="glass-panel" style={{ padding: '25px' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px', borderBottom: '1px solid var(--glass-border)', paddingBottom: '10px' }}>
-                <h3 style={{ fontSize: '16px', fontWeight: '800' }}>🔨 DUTCH AUCTION ROSTER</h3>
-                <button className="btn-secondary" style={{ padding: '6px 12px', fontSize: '11px', display: 'flex', alignItems: 'center', gap: '4px' }} onClick={() => { setEditingAqId(null); setAqText(''); setAqCorrect(''); setAqImg(null); setAqImgName(''); setShowAddAuctionQuestion(true); }}>
-                  <Plus size={12} /> Add Custom Question
-                </button>
-              </div>
-
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                {(gameState.questions || []).map((q, idx) => (
-                  <div key={q.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px', background: 'rgba(0,0,0,0.15)', borderRadius: '8px', border: '1px solid var(--glass-border)' }}>
-                    <div style={{ flex: 1, marginRight: '15px' }}>
-                      <div style={{ display: 'flex', gap: '8px', alignItems: 'center', marginBottom: '4px' }}>
-                        <span style={{ fontSize: '10px', background: 'rgba(255,255,255,0.05)', color: 'var(--text-secondary)', padding: '2px 6px', borderRadius: '4px', fontWeight: 'bold' }}>
-                          MATCH {idx + 1}
-                        </span>
-                        <span style={{
-                          fontSize: '10px',
-                          padding: '2px 6px',
-                          borderRadius: '4px',
-                          fontWeight: 'bold',
-                          color: q.difficulty === 'EASY' ? '#00e676' : q.difficulty === 'MEDIUM' ? '#ffb300' : '#ff1744',
-                          background: q.difficulty === 'EASY' ? 'rgba(0, 230, 118, 0.05)' : q.difficulty === 'MEDIUM' ? 'rgba(255, 179, 0, 0.05)' : 'rgba(255, 23, 68, 0.05)'
-                        }}>
-                          {q.difficulty}
-                        </span>
-                      </div>
-                      <strong style={{ fontSize: '13px', display: 'block', color: '#fff' }}>{q.text}</strong>
-                      <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Correct Answer: {q.correctAnswer}</span>
-                    </div>
-
-                    <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                      <button className="btn-secondary" style={{ padding: '6px' }} onClick={() => editAuctionQuestion(q)}>
-                        <Edit size={12} />
-                      </button>
-                      <button className="btn-secondary" style={{ padding: '6px', borderColor: 'rgba(255,23,68,0.2)' }} onClick={() => deleteAuctionQuestion(q.id)}>
-                        <Trash2 size={12} className="red-card" />
-                      </button>
-                      {q.isPlayed ? (
-                        <span style={{ fontSize: '11px', background: 'rgba(255,255,255,0.03)', color: 'var(--text-muted)', padding: '6px 12px', borderRadius: '4px', border: '1px solid rgba(255,255,255,0.05)' }}>
-                          PLAYED 🔒
-                        </span>
-                      ) : (
-                        <button className="btn-primary" style={{ padding: '6px 12px', fontSize: '11px', background: 'linear-gradient(135deg, #f59e0b 0%, #ff5252 100%)', color: '#170c00' }} onClick={() => handleStartAuction(q.id)}>
-                          LAUNCH DROP 🔨
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                ))}
-                {(gameState.questions || []).length === 0 && (
-                  <div style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '20px 0', fontSize: '13px' }}>
-                    No auction questions preloaded. Click Add Custom Question to start.
                   </div>
                 )}
-              </div>
-            </div>
 
-            {/* Open Questions List */}
-            <div className="glass-panel" style={{ padding: '25px' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px', borderBottom: '1px solid var(--glass-border)', paddingBottom: '10px' }}>
-                <h3 style={{ fontSize: '16px', fontWeight: '800' }}>📢 OPEN QUESTIONS ROSTER</h3>
-                <button className="btn-secondary" style={{ padding: '6px 12px', fontSize: '11px', display: 'flex', alignItems: 'center', gap: '4px' }} onClick={() => { setEditingOqId(null); setOqText(''); setOqA(''); setOqB(''); setOqC(''); setOqD(''); setOqCorrect('A'); setShowAddOpenQuestion(true); }}>
-                  <Plus size={12} /> Add MCQ
-                </button>
+                {gameState.gameState === 'OPEN_QUESTION_REVEAL' && (
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'rgba(0, 176, 255, 0.05)', padding: '15px', borderRadius: '8px', border: '1px solid rgba(0, 176, 255, 0.2)' }}>
+                    <div>
+                      <strong style={{ display: 'block', fontSize: '14px' }}>Open Round Results revealed</strong>
+                      <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>Click next to clean up the lobby.</span>
+                    </div>
+                    <button type="button" className="btn-primary" style={{ background: '#00b0ff', color: 'black' }} onClick={handleNextAuctionMatch}>
+                      Next / Back to Lobby
+                    </button>
+                  </div>
+                )}
+
               </div>
 
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                {(gameState.openQuestions || []).map((q, idx) => (
-                  <div key={q.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px', background: 'rgba(0,0,0,0.15)', borderRadius: '8px', border: '1px solid var(--glass-border)' }}>
-                    <div style={{ flex: 1, marginRight: '15px' }}>
-                      <div style={{ display: 'flex', gap: '8px', alignItems: 'center', marginBottom: '4px' }}>
-                        <span style={{ fontSize: '10px', background: 'rgba(255,255,255,0.05)', color: 'var(--text-secondary)', padding: '2px 6px', borderRadius: '4px', fontWeight: 'bold' }}>
-                          MCQ {idx + 1}
+              {/* Auction Question list */}
+              <div className="glass-panel" style={{ padding: '25px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px', borderBottom: '1px solid var(--glass-border)', paddingBottom: '10px' }}>
+                  <h3 style={{ fontSize: '16px', fontWeight: '800' }}>🔨传统/CONTAINER AUCTION ROSTER</h3>
+                  <button type="button" className="btn-secondary" style={{ padding: '6px 12px', fontSize: '11px', display: 'flex', alignItems: 'center', gap: '4px' }} onClick={() => { setEditingAqId(null); setAqText(''); setAqCorrect(''); setAqImg(null); setAqImgName(''); setAqItems([]); setShowAddAuctionQuestion(true); }}>
+                    <Plus size={12} /> Add Custom Container
+                  </button>
+                </div>
+
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                  {(gameState.questions || []).map((q, idx) => (
+                    <div key={q.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px', background: 'rgba(0,0,0,0.15)', borderRadius: '8px', border: '1px solid var(--glass-border)' }}>
+                      <div style={{ flex: 1, marginRight: '15px' }}>
+                        <div style={{ display: 'flex', gap: '8px', alignItems: 'center', marginBottom: '4px' }}>
+                          <span style={{ fontSize: '10px', background: 'rgba(255,255,255,0.05)', color: 'var(--text-secondary)', padding: '2px 6px', borderRadius: '4px', fontWeight: 'bold' }}>
+                            CONTAINER {idx + 1}
+                          </span>
+                          <span style={{
+                            fontSize: '10px',
+                            padding: '2px 6px',
+                            borderRadius: '4px',
+                            fontWeight: 'bold',
+                            color: q.difficulty === 'EASY' ? '#00e676' : q.difficulty === 'MEDIUM' ? '#ffb300' : '#ff1744',
+                            background: q.difficulty === 'EASY' ? 'rgba(0, 230, 118, 0.05)' : q.difficulty === 'MEDIUM' ? 'rgba(255, 179, 0, 0.05)' : 'rgba(255, 23, 68, 0.05)'
+                          }}>
+                            {q.difficulty}
+                          </span>
+                          {q.items && q.items.length > 0 && (
+                            <span style={{ fontSize: '10px', background: 'rgba(255,215,0,0.1)', color: 'var(--gold-trophy)', padding: '2px 6px', borderRadius: '4px', fontWeight: 'bold' }}>
+                              🎁 {q.items.length} items
+                            </span>
+                          )}
+                        </div>
+                        <strong style={{ fontSize: '13px', display: 'block', color: '#fff' }}>{q.text}</strong>
+                        <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Correct Answer: {q.correctAnswer}</span>
+                      </div>
+
+                      <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                        <button type="button" className="btn-secondary" style={{ padding: '6px' }} onClick={() => editAuctionQuestion(q)}>
+                          <Edit size={12} />
+                        </button>
+                        <button type="button" className="btn-secondary" style={{ padding: '6px', borderColor: 'rgba(255,23,68,0.2)' }} onClick={() => deleteAuctionQuestion(q.id)}>
+                          <Trash2 size={12} className="red-card" />
+                        </button>
+                        {q.isPlayed ? (
+                          <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+                            <span style={{ fontSize: '11px', background: 'rgba(255,255,255,0.03)', color: 'var(--text-muted)', padding: '6px 12px', borderRadius: '4px', border: '1px solid rgba(255,255,255,0.05)' }}>
+                              PLAYED 🔒
+                            </span>
+                            <button
+                              type="button"
+                              className="btn-secondary"
+                              onClick={() => unlockQuestion(q.id)}
+                              style={{ padding: '6px 12px', fontSize: '11px', borderColor: 'var(--pitch-accent-glow)', color: 'var(--pitch-accent)', display: 'inline-flex', alignItems: 'center', gap: '3px' }}
+                              title="Unlock Container"
+                            >
+                              <Unlock size={11} /> Unlock
+                            </button>
+                          </div>
+                        ) : (
+                          <button
+                            type="button"
+                            className="btn-primary"
+                            style={{ padding: '6px 12px', fontSize: '11px', background: 'linear-gradient(135deg, #f59e0b 0%, #ff5252 100%)', color: '#170c00' }}
+                            onClick={() => {
+                              socket.emit('admin-start-container-auction', { roomId, adminToken, questionId: q.id }, (res) => {
+                                if (res && !res.success) alert(res.error || 'Failed to start bidding.');
+                              });
+                            }}
+                          >
+                            START BIDDING 🔨
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                  {(gameState.questions || []).length === 0 && (
+                    <div style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '20px 0', fontSize: '13px' }}>
+                      No containers preloaded. Click Add Custom Container to start.
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Open Questions List */}
+              <div className="glass-panel" style={{ padding: '25px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px', borderBottom: '1px solid var(--glass-border)', paddingBottom: '10px' }}>
+                  <h3 style={{ fontSize: '16px', fontWeight: '800' }}>📢 RECOVERY MCQ QUESTIONS</h3>
+                  <button type="button" className="btn-secondary" style={{ padding: '6px 12px', fontSize: '11px', display: 'flex', alignItems: 'center', gap: '4px' }} onClick={() => { setEditingOqId(null); setOqText(''); setOqA(''); setOqB(''); setOqC(''); setOqD(''); setOqCorrect('A'); setShowAddOpenQuestion(true); }}>
+                    <Plus size={12} /> Add MCQ
+                  </button>
+                </div>
+
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                  {(gameState.openQuestions || []).map((q, idx) => (
+                    <div key={q.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px', background: 'rgba(0,0,0,0.15)', borderRadius: '8px', border: '1px solid var(--glass-border)' }}>
+                      <div style={{ flex: 1, marginRight: '15px' }}>
+                        <div style={{ display: 'flex', gap: '8px', alignItems: 'center', marginBottom: '4px' }}>
+                          <span style={{ fontSize: '10px', background: 'rgba(255,255,255,0.05)', color: 'var(--text-secondary)', padding: '2px 6px', borderRadius: '4px', fontWeight: 'bold' }}>
+                            MCQ {idx + 1}
+                          </span>
+                        </div>
+                        <strong style={{ fontSize: '13px', display: 'block', color: '#fff' }}>{q.text}</strong>
+                        <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
+                          Options: {q.options.map((opt, i) => `${String.fromCharCode(65+i)}: ${opt}`).join(', ')} | Correct: {q.correctAnswer}
                         </span>
                       </div>
-                      <strong style={{ fontSize: '13px', display: 'block', color: '#fff' }}>{q.text}</strong>
-                      <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
-                        Options: {q.options.map((opt, i) => `${String.fromCharCode(65+i)}: ${opt}`).join(', ')} | Correct: {q.correctAnswer}
-                      </span>
-                    </div>
 
-                    <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                      <button className="btn-secondary" style={{ padding: '6px' }} onClick={() => editOpenQuestion(q)}>
-                        <Edit size={12} />
-                      </button>
-                      <button className="btn-secondary" style={{ padding: '6px', borderColor: 'rgba(255,23,68,0.2)' }} onClick={() => deleteOpenQuestion(q.id)}>
-                        <Trash2 size={12} className="red-card" />
-                      </button>
-                      {q.isPlayed ? (
-                        <span style={{ fontSize: '11px', background: 'rgba(255,255,255,0.03)', color: 'var(--text-muted)', padding: '6px 12px', borderRadius: '4px', border: '1px solid rgba(255,255,255,0.05)' }}>
-                          PLAYED 🔒
-                        </span>
-                      ) : (
-                        <button className="btn-primary" style={{ padding: '6px 12px', fontSize: '11px', background: '#00b0ff', color: 'black' }} onClick={() => handleLaunchOpenQuestion(q.id)}>
-                          LAUNCH MCQ 📢
+                      <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                        <button type="button" className="btn-secondary" style={{ padding: '6px' }} onClick={() => editOpenQuestion(q)}>
+                          <Edit size={12} />
                         </button>
-                      )}
+                        <button type="button" className="btn-secondary" style={{ padding: '6px', borderColor: 'rgba(255,23,68,0.2)' }} onClick={() => deleteOpenQuestion(q.id)}>
+                          <Trash2 size={12} className="red-card" />
+                        </button>
+                        {q.isPlayed ? (
+                          <span style={{ fontSize: '11px', background: 'rgba(255,255,255,0.03)', color: 'var(--text-muted)', padding: '6px 12px', borderRadius: '4px', border: '1px solid rgba(255,255,255,0.05)' }}>
+                            PLAYED 🔒
+                          </span>
+                        ) : (
+                          <button type="button" className="btn-primary" style={{ padding: '6px 12px', fontSize: '11px', background: '#00b0ff', color: 'black' }} onClick={() => handleLaunchOpenQuestion(q.id)}>
+                            LAUNCH MCQ 📢
+                          </button>
+                        )}
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  ))}
+                </div>
+              </div>
+
+            </div>
+
+            {/* Right panel: team standings & token controls */}
+            <div>
+              <div className="glass-panel" style={{ padding: '20px', display: 'flex', flexDirection: 'column', gap: '15px' }}>
+                <h3 style={{ fontSize: '16px', fontWeight: '800', borderBottom: '1px solid var(--glass-border)', paddingBottom: '10px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <Users size={16} /> TEAMS STANDINGS
+                </h3>
+
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '700px', overflowY: 'auto' }}>
+                  {Object.values(gameState.groups || {}).map((p) => (
+                    <div key={p.id} style={{ padding: '10px', background: 'rgba(0,0,0,0.15)', border: '1px solid var(--glass-border)', borderRadius: '8px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <div>
+                        <strong style={{ fontSize: '13px', display: 'block' }}>{p.name}</strong>
+                        <span className="gold-token" style={{ fontSize: '12px', fontWeight: 'bold' }}>{p.tokens} 🪙</span>
+                      </div>
+
+                      <div style={{ display: 'flex', gap: '4px' }}>
+                        <button type="button" className="btn-secondary" style={{ padding: '4px 8px', fontSize: '11px' }} onClick={() => socket.emit('admin-adjust-tokens', { roomId, playerId: p.id, amount: 5, adminToken })}>
+                          +5
+                        </button>
+                        <button type="button" className="btn-secondary" style={{ padding: '4px 8px', fontSize: '11px' }} onClick={() => socket.emit('admin-adjust-tokens', { roomId, playerId: p.id, amount: -5, adminToken })}>
+                          -5
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                  {Object.keys(gameState.groups || {}).length === 0 && (
+                    <div style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '20px 0', fontSize: '12px' }}>
+                      No groups configured.
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
 
           </div>
-
-          {/* Right panel: team standings & token controls */}
-          <div>
-            <div className="glass-panel" style={{ padding: '20px', display: 'flex', flexDirection: 'column', gap: '15px' }}>
-              <h3 style={{ fontSize: '16px', fontWeight: '800', borderBottom: '1px solid var(--glass-border)', paddingBottom: '10px', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                <Users size={16} /> TEAMS STANDINGS
-              </h3>
-
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '700px', overflowY: 'auto' }}>
-                {sortedStandings.map((p, idx) => (
-                  <div key={p.id} style={{ padding: '10px', background: 'rgba(0,0,0,0.15)', border: '1px solid var(--glass-border)', borderRadius: '8px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <div>
-                      <strong style={{ fontSize: '13px', display: 'block' }}>{p.name}</strong>
-                      <span className="gold-token" style={{ fontSize: '12px', fontWeight: 'bold' }}>{p.fanTokens} 🪙</span>
-                    </div>
-
-                    <div style={{ display: 'flex', gap: '4px' }}>
-                      <button className="btn-secondary" style={{ padding: '4px 8px', fontSize: '11px' }} onClick={() => socket.emit('admin-adjust-tokens', { roomId, playerId: p.id, amount: 5 })}>
-                        +5
-                      </button>
-                      <button className="btn-secondary" style={{ padding: '4px 8px', fontSize: '11px' }} onClick={() => socket.emit('admin-adjust-tokens', { roomId, playerId: p.id, amount: -5 })}>
-                        -5
-                      </button>
-                      <button className="btn-secondary" style={{ padding: '4px 8px', borderColor: 'rgba(255,23,68,0.2)' }} onClick={() => socket.emit('admin-kick-player', { roomId, playerId: p.id })}>
-                        <UserMinus size={12} className="red-card" />
-                      </button>
-                    </div>
-                  </div>
-                ))}
-                {sortedStandings.length === 0 && (
-                  <div style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '20px 0', fontSize: '12px' }}>
-                    No teams connected yet.
-                  </div>
-                )}
-              </div>
-            </div>
-          </div>
-
-        </div>
+        )}
 
         {/* MODAL: ADD/EDIT AUCTION QUESTION */}
         {showAddAuctionQuestion && (
@@ -795,6 +972,31 @@ function OrganizerView({ socket, gameState, standings, roomId, roomName, adminTo
                       reader.readAsDataURL(file);
                     }
                   }} />
+                </div>
+
+                <div style={{ marginBottom: '10px' }}>
+                  <label style={{ fontSize: '12px', display: 'block', marginBottom: '8px', fontWeight: 'bold' }}>Attach Container Items</label>
+                  <div style={{ display: 'flex', gap: '15px', flexWrap: 'wrap' }}>
+                    {['+10', '+20', '-10', '-20'].map(item => {
+                      const isChecked = aqItems.includes(item);
+                      return (
+                        <label key={item} style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px', cursor: 'pointer', background: 'rgba(255,255,255,0.05)', padding: '6px 12px', borderRadius: '6px', border: isChecked ? '1px solid var(--pitch-accent)' : '1px solid var(--glass-border)' }}>
+                          <input
+                            type="checkbox"
+                            checked={isChecked}
+                            onChange={(e) => {
+                              if (e.target.checked) {
+                                setAqItems([...aqItems, item]);
+                              } else {
+                                setAqItems(aqItems.filter(x => x !== item));
+                              }
+                            }}
+                          />
+                          <span style={{ color: item.startsWith('+') ? 'var(--pitch-accent)' : 'var(--red-card)', fontWeight: 'bold' }}>{item} tokens</span>
+                        </label>
+                      );
+                    })}
+                  </div>
                 </div>
 
                 <div>
@@ -917,9 +1119,6 @@ function OrganizerView({ socket, gameState, standings, roomId, roomName, adminTo
         </div>
 
         <div className="flex-wrap-mobile">
-          <button className="btn-secondary" onClick={() => setShowRecoveryHub(true)} style={{ display: 'flex', alignItems: 'center', gap: '6px', color: '#60a5fa', borderColor: 'rgba(96,165,250,0.3)' }}>
-            <Lock size={16} /> Security & Recovery
-          </button>
           <button className="btn-secondary" onClick={() => setShowSettings(true)} style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
             <Settings size={16} /> Rules Config
           </button>
@@ -1428,130 +1627,7 @@ function OrganizerView({ socket, gameState, standings, roomId, roomName, adminTo
         </div>
       )}
 
-      {/* SECURITY & PIN RECOVERY HUB */}
-      {showRecoveryHub && (
-        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.85)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 10000 }}>
-          <div className="glass-panel" style={{ padding: '30px', maxWidth: '800px', width: '95%', maxHeight: '90vh', display: 'flex', flexDirection: 'column', gap: '20px' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--glass-border)', paddingBottom: '10px' }}>
-              <h3 style={{ fontSize: '18px', fontWeight: '800', display: 'flex', alignItems: 'center', gap: '8px', color: '#60a5fa' }}>
-                <Lock size={20} /> Security & Recovery Hub
-              </h3>
-              <button className="btn-secondary" onClick={() => setShowRecoveryHub(false)} style={{ padding: '6px 12px', fontSize: '12px' }}>
-                Close
-              </button>
-            </div>
 
-            <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '25px', overflowY: 'auto', flex: 1, paddingRight: '5px' }}>
-              {/* Left Side: Player Recovery */}
-              <div>
-                <h4 style={{ fontSize: '14px', fontWeight: 'bold', marginBottom: '10px', color: 'var(--text-secondary)' }}>
-                  🔑 Player PIN Recovery
-                </h4>
-
-                <input
-                  type="text"
-                  className="text-input"
-                  placeholder="Search username..."
-                  value={recoverySearch}
-                  onChange={(e) => setRecoverySearch(e.target.value)}
-                  style={{ marginBottom: '15px', padding: '10px 14px', fontSize: '14px' }}
-                />
-
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '400px', overflowY: 'auto' }}>
-                  {playerAccounts
-                    .filter(acc => acc.username.toLowerCase().includes(recoverySearch.toLowerCase()))
-                    .map(acc => {
-                      const isEditing = editingAccount === acc.username;
-                      return (
-                        <div key={acc.username} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 15px', background: 'rgba(255,255,255,0.03)', border: '1px solid var(--glass-border)', borderRadius: '8px' }}>
-                          <span style={{ fontWeight: 'bold', fontSize: '14px' }}>{acc.username}</span>
-                          
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                            {isEditing ? (
-                              <>
-                                <input
-                                  type="text"
-                                  pattern="[0-9]*"
-                                  inputMode="numeric"
-                                  maxLength={4}
-                                  value={newAccountPin}
-                                  onChange={(e) => setNewAccountPin(e.target.value.replace(/\D/g, ''))}
-                                  placeholder="New PIN"
-                                  style={{
-                                    width: '80px',
-                                    padding: '6px 10px',
-                                    fontSize: '13px',
-                                    background: 'rgba(0,0,0,0.5)',
-                                    border: '1px solid var(--pitch-accent)',
-                                    borderRadius: '6px',
-                                    color: '#fff',
-                                    textAlign: 'center'
-                                  }}
-                                />
-                                <button
-                                  className="btn-primary"
-                                  onClick={() => handleUpdatePlayerPin(acc.username, newAccountPin)}
-                                  style={{ padding: '6px 10px', fontSize: '11px', display: 'inline-block', width: 'auto' }}
-                                >
-                                  Save
-                                </button>
-                                <button
-                                  className="btn-secondary"
-                                  onClick={() => setEditingAccount(null)}
-                                  style={{ padding: '6px 10px', fontSize: '11px', display: 'inline-block', width: 'auto' }}
-                                >
-                                  Cancel
-                                </button>
-                              </>
-                            ) : (
-                              <>
-                                <span style={{ fontSize: '13px', color: '#a7f3d0', fontFamily: 'monospace', letterSpacing: '2px', fontWeight: 'bold' }}>
-                                  PIN: {acc.pin}
-                                </span>
-                                <button
-                                  onClick={() => {
-                                    setEditingAccount(acc.username);
-                                    setNewAccountPin(acc.pin);
-                                  }}
-                                  style={{ background: 'none', border: 'none', color: '#60a5fa', cursor: 'pointer', display: 'flex', alignItems: 'center' }}
-                                  title="Change PIN"
-                                >
-                                  <Edit size={14} />
-                                </button>
-                              </>
-                            )}
-                          </div>
-                        </div>
-                      );
-                    })}
-
-                  {playerAccounts.length === 0 && (
-                    <div style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '20px 0', fontSize: '13px' }}>
-                      No registered player accounts found.
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              {/* Right Side: Organizer List */}
-              <div style={{ borderLeft: '1px solid var(--glass-border)', paddingLeft: '20px' }}>
-                <h4 style={{ fontSize: '14px', fontWeight: 'bold', marginBottom: '15px', color: 'var(--text-secondary)' }}>
-                  🛡️ Registered Admins
-                </h4>
-
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '450px', overflowY: 'auto' }}>
-                  {organizersList.map(adminName => (
-                    <div key={adminName} style={{ padding: '10px 15px', background: 'rgba(255,255,255,0.03)', border: '1px solid var(--glass-border)', borderRadius: '8px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                      <span style={{ width: '8px', height: '8px', background: 'var(--pitch-accent)', borderRadius: '50%' }}></span>
-                      <span style={{ fontSize: '13px', fontWeight: 'bold' }}>{adminName}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
 
     </div>
   );

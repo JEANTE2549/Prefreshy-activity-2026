@@ -4,7 +4,7 @@ import PlayerView from './views/PlayerView.jsx';
 import OrganizerView from './views/OrganizerView.jsx';
 import ProjectorView from './views/ProjectorView.jsx';
 import AuctionPlaceholderView from './views/AuctionPlaceholderView.jsx';
-import { LogOut, Lock, Play, Settings, Layers, UserPlus, Info } from 'lucide-react';
+import { LogOut, Lock, Play, Settings, Layers, UserPlus, Info, Edit } from 'lucide-react';
 
 const socket = io(window.location.origin);
 
@@ -59,6 +59,46 @@ function App() {
   const [adminToken, setAdminToken] = useState('');
   const [clickCount, setClickCount] = useState(0);
   const [playerPinInput, setPlayerPinInput] = useState('');
+
+  // Global Security & Recovery states
+  const [showRecoveryHub, setShowRecoveryHub] = useState(false);
+  const [playerAccounts, setPlayerAccounts] = useState([]);
+  const [organizersList, setOrganizersList] = useState([]);
+  const [recoverySearch, setRecoverySearch] = useState('');
+  const [editingAccount, setEditingAccount] = useState(null);
+  const [newAccountPin, setNewAccountPin] = useState('');
+
+  // Fetch security/recovery records on modal load
+  useEffect(() => {
+    if (showRecoveryHub) {
+      socket.emit('admin-get-accounts', { roomId: 'prediction', adminToken }, (res) => {
+        if (res.success) setPlayerAccounts(res.accounts || []);
+      });
+      socket.emit('admin-get-organizers', { roomId: 'prediction', adminToken }, (res) => {
+        if (res.success) setOrganizersList(res.organizers || []);
+      });
+    }
+  }, [showRecoveryHub, adminToken]);
+
+  const handleUpdatePlayerPin = (username, newPin) => {
+    if (!/^\d{4}$/.test(newPin)) {
+      alert("PIN must be exactly 4 digits.");
+      return;
+    }
+    socket.emit('admin-update-player-pin', { roomId: 'prediction', adminToken, username, newPin }, (res) => {
+      if (res.success) {
+        alert("Player PIN updated successfully!");
+        setEditingAccount(null);
+        setNewAccountPin('');
+        // Refresh list
+        socket.emit('admin-get-accounts', { roomId: 'prediction', adminToken }, (r) => {
+          if (r.success) setPlayerAccounts(r.accounts || []);
+        });
+      } else {
+        alert(res.error || "Failed to update PIN.");
+      }
+    });
+  };
   const [isRegisterMode, setIsRegisterMode] = useState(false);
 
   // Auto-reset secret click count if idle for 1s
@@ -200,6 +240,28 @@ function App() {
 
     socket.on('timer-tick', (seconds) => {
       setGameState(prev => ({ ...prev, timerSecondsRemaining: seconds }));
+    });
+
+    socket.on('bid-updated', (data) => {
+      setGameState(prev => ({
+        ...prev,
+        currentBid: data.currentBid,
+        highestBidder: data.highestBidder
+      }));
+    });
+
+    socket.on('item-revealed', (data) => {
+      setGameState(prev => ({
+        ...prev,
+        groups: data.groups
+      }));
+    });
+
+    socket.on('groups-update', (groups) => {
+      setGameState(prev => ({
+        ...prev,
+        groups
+      }));
     });
 
     socket.on('standings-update', (data) => {
@@ -469,548 +531,536 @@ function App() {
     setPlayerId('');
     setPlayerPinInput('');
     setAdminMode(false);
-    setPinCode('');
-    setAdminUsername('');
-    setAdminPassword('');
-    setRegKey('');
-    setAuthError('');
-    setCurrentView('landing');
   };
-
-  // Render Functions
-  if (currentView === 'landing') {
-    return (
-      <div style={{
-        minHeight: '100vh',
-        display: 'flex',
-        flexDirection: 'column',
-        justifyContent: 'center',
-        alignItems: 'center',
-        background: 'linear-gradient(135deg, #4c1d95 0%, #1e1b4b 100%)',
-        padding: '20px',
-        color: '#fff'
-      }}>
-        <div className="glass-panel" style={{
-          padding: '40px 30px',
-          maxWidth: '420px',
-          width: '100%',
-          textAlign: 'center',
-          background: 'rgba(255, 255, 255, 0.1)',
-          border: '1px solid rgba(255, 255, 255, 0.2)',
-          boxShadow: '0 20px 40px rgba(0,0,0,0.5)',
-          borderRadius: '24px'
-        }}>
-          <div onClick={handleSecretClick} style={{ fontSize: '70px', marginBottom: '15px', animation: 'bounce-ball 2s infinite ease-in-out', cursor: 'default', userSelect: 'none' }}>⚽</div>
-          <h1 onClick={handleSecretClick} style={{ fontSize: '32px', fontWeight: '950', marginBottom: '8px', letterSpacing: '1px', textTransform: 'uppercase', cursor: 'default', userSelect: 'none' }}>
-            Python World Cup
-          </h1>
-          <p style={{ color: '#c084fc', fontWeight: 'bold', fontSize: '15px', textTransform: 'uppercase', marginBottom: '30px', letterSpacing: '2px' }}>
-            PREDICTION CHALLENGE
-          </p>
-
-          <h2 style={{ fontSize: '18px', fontWeight: '800', marginBottom: '20px', textTransform: 'uppercase', color: '#a7f3d0' }}>
-            {isRegisterMode ? '🆕 Create Player Account' : '🔑 Player Sign In'}
-          </h2>
-
-          <form onSubmit={isRegisterMode ? handlePlayerRegister : handlePlayerLogin}>
-            <div style={{ textAlign: 'left', marginBottom: '15px' }}>
-              <label style={{ fontSize: '12px', color: 'rgba(255,255,255,0.6)', display: 'block', marginBottom: '6px', fontWeight: 'bold' }}>
-                NICKNAME / USERNAME
-              </label>
-              <input
-                type="text"
-                placeholder="Nickname or Username"
-                value={nickname}
-                onChange={(e) => setNickname(e.target.value)}
-                maxLength={15}
-                style={{
-                  width: '100%',
-                  padding: '14px',
-                  fontSize: '16px',
-                  borderRadius: '12px',
-                  border: '1px solid rgba(255,255,255,0.08)',
-                  background: 'rgba(0,0,0,0.3)',
-                  color: '#fff',
-                  outline: 'none'
-                }}
-              />
-            </div>
-
-            <div style={{ textAlign: 'left', marginBottom: '20px' }}>
-              <label style={{ fontSize: '12px', color: 'rgba(255,255,255,0.6)', display: 'block', marginBottom: '6px', fontWeight: 'bold' }}>
-                4-DIGIT PIN
-              </label>
-              <input
-                type="password"
-                pattern="[0-9]*"
-                inputMode="numeric"
-                maxLength={4}
-                placeholder="4-digit PIN (e.g. 1234)"
-                value={playerPinInput}
-                onChange={(e) => setPlayerPinInput(e.target.value)}
-                style={{
-                  width: '100%',
-                  padding: '14px',
-                  fontSize: '16px',
-                  borderRadius: '12px',
-                  border: '1px solid rgba(255,255,255,0.08)',
-                  background: 'rgba(0,0,0,0.3)',
-                  color: '#fff',
-                  outline: 'none',
-                  letterSpacing: '5px',
-                  textAlign: 'center'
-                }}
-              />
-            </div>
-
-            {authError && (
-              <div style={{ color: '#ff4d4d', background: 'rgba(255,77,77,0.1)', border: '1px solid rgba(255,77,77,0.2)', padding: '10px', borderRadius: '8px', marginBottom: '20px', fontSize: '13px' }}>
-                {authError}
-              </div>
-            )}
-
-            <button type="submit" className="btn-primary" style={{ width: '100%', padding: '16px', fontSize: '16px', background: 'linear-gradient(135deg, #a855f7 0%, #7c3aed 100%)', boxShadow: '0 4px 20px rgba(124, 58, 237, 0.4)' }}>
-              {isRegisterMode ? 'Register & Enter ⚽' : 'Sign In ⚽'}
-            </button>
-          </form>
-
-          <div style={{ marginTop: '25px', fontSize: '13px' }}>
-            <span style={{ color: 'rgba(255,255,255,0.4)' }}>
-              {isRegisterMode ? 'Already have an account? ' : 'First time playing? '}
-            </span>
-            <button
-              onClick={() => {
-                setAuthError('');
-                setIsRegisterMode(!isRegisterMode);
-              }}
-              style={{ background: 'none', border: 'none', color: '#c084fc', cursor: 'pointer', fontWeight: 'bold', textDecoration: 'underline', padding: 0 }}
-            >
-              {isRegisterMode ? 'Sign In' : 'Create Account'}
-            </button>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  if (currentView === 'enter-room') {
-    return (
-      <div style={{
-        minHeight: '100vh',
-        display: 'flex',
-        flexDirection: 'column',
-        justifyContent: 'center',
-        alignItems: 'center',
-        background: 'linear-gradient(135deg, #0e1e38 0%, #050a14 100%)',
-        padding: '20px',
-        color: '#fff'
-      }}>
-        <div className="glass-panel" style={{
-          padding: '40px 30px',
-          maxWidth: '420px',
-          width: '100%',
-          textAlign: 'center',
-          borderRadius: '24px',
-          border: '1px solid rgba(255,255,255,0.05)',
-          boxShadow: '0 20px 40px rgba(0,0,0,0.6)'
-        }}>
-          <h2 style={{ fontSize: '24px', fontWeight: '900', marginBottom: '8px' }}>🏟️ ENTER PLAYING FIELD</h2>
-          <p style={{ color: '#c084fc', fontSize: '14px', marginBottom: '25px', fontWeight: 'bold' }}>
-            Welcome, {nickname}! 🏆
-          </p>
-
-          <form onSubmit={handleEnterRoom}>
-            <div style={{ textAlign: 'left', marginBottom: '20px' }}>
-              <label style={{ fontSize: '12px', color: 'var(--text-secondary)', display: 'block', marginBottom: '6px', fontWeight: 'bold' }}>
-                GAME PIN CODE
-              </label>
-              <input
-                type="text"
-                pattern="[0-9]*"
-                inputMode="numeric"
-                maxLength={6}
-                placeholder="Game PIN (e.g. 123456)"
-                value={pinCode}
-                onChange={(e) => setPinCode(e.target.value)}
-                style={{
-                  width: '100%',
-                  padding: '16px',
-                  fontSize: '20px',
-                  fontWeight: 'bold',
-                  borderRadius: '12px',
-                  border: '2px solid rgba(255,255,255,0.08)',
-                  background: 'rgba(0,0,0,0.3)',
-                  color: '#fff',
-                  outline: 'none',
-                  textAlign: 'center'
-                }}
-              />
-            </div>
-
-            {authError && (
-              <div style={{ color: '#ff4d4d', background: 'rgba(255,77,77,0.1)', border: '1px solid rgba(255,77,77,0.2)', padding: '10px', borderRadius: '8px', marginBottom: '20px', fontSize: '13px' }}>
-                {authError}
-              </div>
-            )}
-
-            <div style={{ display: 'flex', gap: '15px' }}>
-              <button
-                type="button"
-                className="btn-secondary"
-                onClick={handleLogout}
-                style={{ flex: 1, padding: '14px' }}
-              >
-                Sign Out
-              </button>
-              <button
-                type="submit"
-                className="btn-primary"
-                style={{ flex: 1, padding: '14px', background: 'linear-gradient(135deg, var(--pitch-accent) 0%, #00b0ff 100%)' }}
-              >
-                Enter Room ⚽
-              </button>
-            </div>
-          </form>
-        </div>
-      </div>
-    );
-  }
-
-  if (currentView === 'admin-login') {
-    return (
-      <div style={{
-        minHeight: '100vh',
-        display: 'flex',
-        flexDirection: 'column',
-        justifyContent: 'center',
-        alignItems: 'center',
-        background: '#0a0d16',
-        padding: '20px',
-        color: '#fff'
-      }}>
-        <div className="glass-panel" style={{
-          padding: '40px 30px',
-          maxWidth: '400px',
-          width: '100%',
-          textAlign: 'center',
-          borderRadius: '24px',
-          border: '1px solid rgba(255,255,255,0.05)',
-          boxShadow: '0 20px 40px rgba(0,0,0,0.7)'
-        }}>
-          <h2 style={{ fontSize: '24px', fontWeight: '900', marginBottom: '25px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '10px' }}>
-            <Lock size={22} style={{ color: '#00e676' }} /> REFEREE SIGN IN
-          </h2>
-
-          <form onSubmit={handleAdminLogin}>
-            <input
-              type="text"
-              placeholder="Username"
-              value={adminUsername}
-              onChange={(e) => setAdminUsername(e.target.value)}
-              style={{
-                width: '100%',
-                padding: '14px',
-                fontSize: '16px',
-                borderRadius: '12px',
-                border: '1px solid rgba(255,255,255,0.08)',
-                background: 'rgba(0,0,0,0.4)',
-                color: '#fff',
-                outline: 'none',
-                marginBottom: '15px'
-              }}
-            />
-
-            <input
-              type="password"
-              placeholder="Password"
-              value={adminPassword}
-              onChange={(e) => setAdminPassword(e.target.value)}
-              style={{
-                width: '100%',
-                padding: '14px',
-                fontSize: '16px',
-                borderRadius: '12px',
-                border: '1px solid rgba(255,255,255,0.08)',
-                background: 'rgba(0,0,0,0.4)',
-                color: '#fff',
-                outline: 'none',
-                marginBottom: '15px'
-              }}
-            />
-
-            {authError && (
-              <div style={{ color: '#ff4d4d', background: 'rgba(255,77,77,0.1)', border: '1px solid rgba(255,77,77,0.2)', padding: '10px', borderRadius: '8px', marginBottom: '15px', fontSize: '13px' }}>
-                {authError}
-              </div>
-            )}
-
-            <button type="submit" className="btn-primary" style={{ width: '100%', marginBottom: '15px', background: 'linear-gradient(135deg, #00e676 0%, #00b0ff 100%)', color: '#07170f' }}>
-              Sign In
-            </button>
-
-            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', marginTop: '10px' }}>
-              <button type="button" style={{ background: 'none', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer' }} onClick={() => setCurrentView('landing')}>
-                Back to Play
-              </button>
-              <button type="button" style={{ background: 'none', border: 'none', color: '#00e676', cursor: 'pointer', fontWeight: 'bold' }} onClick={() => { setAuthError(''); setCurrentView('admin-register'); }}>
-                Register Account
-              </button>
-            </div>
-          </form>
-        </div>
-      </div>
-    );
-  }
-
-  if (currentView === 'admin-register') {
-    return (
-      <div style={{
-        minHeight: '100vh',
-        display: 'flex',
-        flexDirection: 'column',
-        justifyContent: 'center',
-        alignItems: 'center',
-        background: '#0a0d16',
-        padding: '20px',
-        color: '#fff'
-      }}>
-        <div className="glass-panel" style={{
-          padding: '40px 30px',
-          maxWidth: '400px',
-          width: '100%',
-          textAlign: 'center',
-          borderRadius: '24px',
-          border: '1px solid rgba(255,255,255,0.05)',
-          boxShadow: '0 20px 40px rgba(0,0,0,0.7)'
-        }}>
-          <h2 style={{ fontSize: '24px', fontWeight: '900', marginBottom: '25px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '10px' }}>
-            <UserPlus size={22} style={{ color: '#a855f7' }} /> ORGANIZER SIGN UP
-          </h2>
-
-          <form onSubmit={handleAdminRegister}>
-            <input
-              type="text"
-              placeholder="Username"
-              value={adminUsername}
-              onChange={(e) => setAdminUsername(e.target.value)}
-              style={{
-                width: '100%',
-                padding: '14px',
-                fontSize: '16px',
-                borderRadius: '12px',
-                border: '1px solid rgba(255,255,255,0.08)',
-                background: 'rgba(0,0,0,0.4)',
-                color: '#fff',
-                outline: 'none',
-                marginBottom: '15px'
-              }}
-            />
-
-            <input
-              type="password"
-              placeholder="Password"
-              value={adminPassword}
-              onChange={(e) => setAdminPassword(e.target.value)}
-              style={{
-                width: '100%',
-                padding: '14px',
-                fontSize: '16px',
-                borderRadius: '12px',
-                border: '1px solid rgba(255,255,255,0.08)',
-                background: 'rgba(0,0,0,0.4)',
-                color: '#fff',
-                outline: 'none',
-                marginBottom: '15px'
-              }}
-            />
-
-            <input
-              type="text"
-              placeholder="Event Registration Key"
-              value={regKey}
-              onChange={(e) => setRegKey(e.target.value)}
-              style={{
-                width: '100%',
-                padding: '14px',
-                fontSize: '16px',
-                borderRadius: '12px',
-                border: '1px solid rgba(255,255,255,0.08)',
-                background: 'rgba(0,0,0,0.4)',
-                color: '#fff',
-                outline: 'none',
-                marginBottom: '15px'
-              }}
-            />
-
-            {authError && (
-              <div style={{ color: '#ff4d4d', background: 'rgba(255,77,77,0.1)', border: '1px solid rgba(255,77,77,0.2)', padding: '10px', borderRadius: '8px', marginBottom: '15px', fontSize: '13px' }}>
-                {authError}
-              </div>
-            )}
-
-            <button type="submit" className="btn-primary" style={{ width: '100%', marginBottom: '15px', background: 'linear-gradient(135deg, #a855f7 0%, #7c3aed 100%)' }}>
-              Sign Up
-            </button>
-
-            <div style={{ display: 'flex', justifyContent: 'center', fontSize: '13px', marginTop: '10px' }}>
-              <button type="button" style={{ background: 'none', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer' }} onClick={() => { setAuthError(''); setCurrentView('admin-login'); }}>
-                Back to Login
-              </button>
-            </div>
-          </form>
-        </div>
-      </div>
-    );
-  }
-
-  if (currentView === 'admin-hub') {
-    return (
-      <div style={{
-        minHeight: '100vh',
-        background: '#070a13',
-        color: '#fff',
-        padding: '40px 20px'
-      }}>
-        <div style={{ maxWidth: '1000px', margin: '0 auto' }}>
-
-          <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '40px', borderBottom: '1px solid rgba(255,255,255,0.08)', paddingBottom: '20px' }}>
-            <div>
-              <span style={{ fontSize: '13px', textTransform: 'uppercase', color: '#00e676', fontWeight: '800', letterSpacing: '1px' }}>Overview</span>
-              <h1 style={{ fontSize: '28px', fontWeight: '900', marginTop: '4px' }}>Organizer Hub</h1>
-            </div>
-            <button className="btn-secondary" onClick={handleLogout} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <LogOut size={16} /> Sign Out
-            </button>
-          </header>
-
-          <p style={{ color: '#a0aec0', marginBottom: '30px', fontSize: '15px' }}>
-            Select a game to open its presenter view or control board.
-          </p>
-
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(400px, 1fr))', gap: '25px' }}>
-
-            {/* Prediction Challenge Workspace Card */}
-            <div
-              className="glass-panel"
-              style={{
-                padding: '30px',
-                background: 'rgba(25, 30, 48, 0.55)',
-                border: '1px solid rgba(255,255,255,0.05)',
-                borderRadius: '20px',
-                display: 'flex',
-                flexDirection: 'column',
-                gap: '20px',
-                boxShadow: '0 10px 30px rgba(0,0,0,0.3)',
-                transition: 'transform 0.2s, border-color 0.2s',
-                cursor: 'default'
-              }}
-              onMouseEnter={(e) => { e.currentTarget.style.borderColor = 'rgba(0, 230, 118, 0.3)'; e.currentTarget.style.transform = 'translateY(-2px)'; }}
-              onMouseLeave={(e) => { e.currentTarget.style.borderColor = 'rgba(255,255,255,0.05)'; e.currentTarget.style.transform = 'translateY(0)'; }}
-            >
-              <div>
-                <h3 style={{ fontSize: '22px', fontWeight: '850', color: '#fff' }}>1. Prediction Challenge</h3>
-                <span style={{ fontSize: '12px', color: '#00e676', background: 'rgba(0, 230, 118, 0.1)', padding: '2px 8px', borderRadius: '20px', display: 'inline-block', marginTop: '6px', fontWeight: 'bold' }}>
-                  Game PIN: 2026
-                </span>
-                <p style={{ marginTop: '10px', fontSize: '13px', color: '#a0aec0', lineHeight: '1.4' }}>
-                  Players predict collective behavior to win Fan Tokens. High-suspense screen outputs and Ref settings panel.
-                </p>
-              </div>
-
-              <div style={{ borderTop: '1px solid rgba(255,255,255,0.05)', paddingTop: '20px', display: 'flex', gap: '10px' }}>
-                <button
-                  className="btn-primary"
-                  style={{ flex: 1, padding: '10px', fontSize: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', background: 'linear-gradient(135deg, #00e676 0%, #00b0ff 100%)', color: '#07170f' }}
-                  onClick={() => {
-                    setRoomId('prediction');
-                    setRoomName('Prediction Challenge');
-                    setAdminMode(true);
-                    setCurrentView('projector');
-                  }}
-                >
-                  <Play size={14} /> Open Projector (Admin)
-                </button>
-                <button
-                  className="btn-secondary"
-                  style={{ flex: 1, padding: '10px', fontSize: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}
-                  onClick={() => {
-                    setRoomId('prediction');
-                    setRoomName('Prediction Challenge');
-                    setAdminMode(true);
-                    setCurrentView('organizer');
-                  }}
-                >
-                  <Settings size={14} /> Organizer Panel
-                </button>
-              </div>
-            </div>
-
-            {/* Python Auction Workspace Card */}
-            <div
-              className="glass-panel"
-              style={{
-                padding: '30px',
-                background: 'rgba(25, 30, 48, 0.55)',
-                border: '1px solid rgba(255,255,255,0.05)',
-                borderRadius: '20px',
-                display: 'flex',
-                flexDirection: 'column',
-                gap: '20px',
-                boxShadow: '0 10px 30px rgba(0,0,0,0.3)',
-                transition: 'transform 0.2s, border-color 0.2s',
-                cursor: 'default'
-              }}
-              onMouseEnter={(e) => { e.currentTarget.style.borderColor = 'rgba(245, 158, 11, 0.3)'; e.currentTarget.style.transform = 'translateY(-2px)'; }}
-              onMouseLeave={(e) => { e.currentTarget.style.borderColor = 'rgba(255,255,255,0.05)'; e.currentTarget.style.transform = 'translateY(0)'; }}
-            >
-              <div>
-                <h3 style={{ fontSize: '22px', fontWeight: '850', color: '#fff' }}>2. Python Auction</h3>
-                <span style={{ fontSize: '12px', color: '#f59e0b', background: 'rgba(245, 158, 11, 0.1)', padding: '2px 8px', borderRadius: '20px', display: 'inline-block', marginTop: '6px', fontWeight: 'bold' }}>
-                  Game PIN: 1127
-                </span>
-                <p style={{ marginTop: '10px', fontSize: '13px', color: '#a0aec0', lineHeight: '1.4' }}>
-                  Final-day python auction bidding arena. Converts player tokens from predictions into bidding power.
-                </p>
-              </div>
-
-              <div style={{ borderTop: '1px solid rgba(255,255,255,0.05)', paddingTop: '20px', display: 'flex', gap: '10px' }}>
-                <button
-                  className="btn-primary"
-                  style={{ flex: 1, padding: '10px', fontSize: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', background: 'linear-gradient(135deg, #f59e0b 0%, #ff5252 100%)', color: '#170c00' }}
-                  onClick={() => {
-                    setRoomId('auction');
-                    setRoomName('Python Auction');
-                    setAdminMode(true);
-                    setCurrentView('projector');
-                  }}
-                >
-                  <Play size={14} /> Open Projector (Admin)
-                </button>
-                <button
-                  className="btn-secondary"
-                  style={{ flex: 1, padding: '10px', fontSize: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', borderColor: 'rgba(245, 158, 11, 0.3)', color: '#f59e0b' }}
-                  onClick={() => {
-                    setRoomId('auction');
-                    setRoomName('Python Auction');
-                    setAdminMode(true);
-                    setCurrentView('organizer');
-                  }}
-                >
-                  <Settings size={14} /> Organizer Panel
-                </button>
-              </div>
-            </div>
-
-          </div>
-
-        </div>
-      </div>
-    );
-  }
 
   const renderActiveView = () => {
     switch (currentView) {
-      case 'player':
+      case 'landing':
+        return (
+          <div style={{
+            minHeight: '100vh',
+            display: 'flex',
+            flexDirection: 'column',
+            justifyContent: 'center',
+            alignItems: 'center',
+            background: 'linear-gradient(135deg, #4c1d95 0%, #1e1b4b 100%)',
+            padding: '20px',
+            color: '#fff'
+          }}>
+            <div className="glass-panel" style={{
+              padding: '40px 30px',
+              maxWidth: '420px',
+              width: '100%',
+              textAlign: 'center',
+              background: 'rgba(255, 255, 255, 0.1)',
+              border: '1px solid rgba(255, 255, 255, 0.2)',
+              boxShadow: '0 20px 40px rgba(0,0,0,0.5)',
+              borderRadius: '24px'
+            }}>
+              <div onClick={handleSecretClick} style={{ fontSize: '70px', marginBottom: '15px', animation: 'bounce-ball 2s infinite ease-in-out', cursor: 'default', userSelect: 'none' }}>⚽</div>
+              <h1 onClick={handleSecretClick} style={{ fontSize: '32px', fontWeight: '950', marginBottom: '8px', letterSpacing: '1px', textTransform: 'uppercase', cursor: 'default', userSelect: 'none' }}>
+                Python World Cup
+              </h1>
+              <p style={{ color: '#c084fc', fontWeight: 'bold', fontSize: '15px', textTransform: 'uppercase', marginBottom: '30px', letterSpacing: '2px' }}>
+                PREDICTION CHALLENGE
+              </p>
+
+              <h2 style={{ fontSize: '18px', fontWeight: '800', marginBottom: '20px', textTransform: 'uppercase', color: '#a7f3d0' }}>
+                {isRegisterMode ? '🆕 Create Player Account' : '🔑 Player Sign In'}
+              </h2>
+
+              <form onSubmit={isRegisterMode ? handlePlayerRegister : handlePlayerLogin}>
+                <div style={{ textAlign: 'left', marginBottom: '15px' }}>
+                  <label style={{ fontSize: '12px', color: 'rgba(255,255,255,0.6)', display: 'block', marginBottom: '6px', fontWeight: 'bold' }}>
+                    NICKNAME / USERNAME
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="Nickname or Username"
+                    value={nickname}
+                    onChange={(e) => setNickname(e.target.value)}
+                    maxLength={15}
+                    style={{
+                      width: '100%',
+                      padding: '14px',
+                      fontSize: '16px',
+                      borderRadius: '12px',
+                      border: '1px solid rgba(255,255,255,0.08)',
+                      background: 'rgba(0,0,0,0.3)',
+                      color: '#fff',
+                      outline: 'none'
+                    }}
+                  />
+                </div>
+
+                <div style={{ textAlign: 'left', marginBottom: '20px' }}>
+                  <label style={{ fontSize: '12px', color: 'rgba(255,255,255,0.6)', display: 'block', marginBottom: '6px', fontWeight: 'bold' }}>
+                    4-DIGIT PIN
+                  </label>
+                  <input
+                    type="password"
+                    pattern="[0-9]*"
+                    inputMode="numeric"
+                    maxLength={4}
+                    placeholder="4-digit PIN (e.g. 1234)"
+                    value={playerPinInput}
+                    onChange={(e) => setPlayerPinInput(e.target.value)}
+                    style={{
+                      width: '100%',
+                      padding: '14px',
+                      fontSize: '16px',
+                      borderRadius: '12px',
+                      border: '1px solid rgba(255,255,255,0.08)',
+                      background: 'rgba(0,0,0,0.3)',
+                      color: '#fff',
+                      outline: 'none',
+                      letterSpacing: '5px',
+                      textAlign: 'center'
+                    }}
+                  />
+                </div>
+
+                {authError && (
+                  <div style={{ color: '#ff4d4d', background: 'rgba(255,77,77,0.1)', border: '1px solid rgba(255,77,77,0.2)', padding: '10px', borderRadius: '8px', marginBottom: '20px', fontSize: '13px' }}>
+                    {authError}
+                  </div>
+                )}
+
+                <button type="submit" className="btn-primary" style={{ width: '100%', padding: '16px', fontSize: '16px', background: 'linear-gradient(135deg, #a855f7 0%, #7c3aed 100%)', boxShadow: '0 4px 20px rgba(124, 58, 237, 0.4)' }}>
+                  {isRegisterMode ? 'Register & Enter ⚽' : 'Sign In ⚽'}
+                </button>
+              </form>
+
+              <div style={{ marginTop: '25px', fontSize: '13px' }}>
+                <span style={{ color: 'rgba(255,255,255,0.4)' }}>
+                  {isRegisterMode ? 'Already have an account? ' : 'First time playing? '}
+                </span>
+                <button
+                  onClick={() => {
+                    setAuthError('');
+                    setIsRegisterMode(!isRegisterMode);
+                  }}
+                  style={{ background: 'none', border: 'none', color: '#c084fc', cursor: 'pointer', fontWeight: 'bold', textDecoration: 'underline', padding: 0 }}
+                >
+                  {isRegisterMode ? 'Sign In' : 'Create Account'}
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      case 'enter-room':
+        return (
+          <div style={{
+            minHeight: '100vh',
+            display: 'flex',
+            flexDirection: 'column',
+            justifyContent: 'center',
+            alignItems: 'center',
+            background: 'linear-gradient(135deg, #0e1e38 0%, #050a14 100%)',
+            padding: '20px',
+            color: '#fff'
+          }}>
+            <div className="glass-panel" style={{
+              padding: '40px 30px',
+              maxWidth: '420px',
+              width: '100%',
+              textAlign: 'center',
+              borderRadius: '24px',
+              border: '1px solid rgba(255,255,255,0.05)',
+              boxShadow: '0 20px 40px rgba(0,0,0,0.6)'
+            }}>
+              <h2 style={{ fontSize: '24px', fontWeight: '900', marginBottom: '8px' }}>🏟️ ENTER PLAYING FIELD</h2>
+              <p style={{ color: '#c084fc', fontSize: '14px', marginBottom: '25px', fontWeight: 'bold' }}>
+                Welcome, {nickname}! 🏆
+              </p>
+
+              <form onSubmit={handleEnterRoom}>
+                <div style={{ textAlign: 'left', marginBottom: '20px' }}>
+                  <label style={{ fontSize: '12px', color: 'var(--text-secondary)', display: 'block', marginBottom: '6px', fontWeight: 'bold' }}>
+                    GAME PIN CODE
+                  </label>
+                  <input
+                    type="text"
+                    pattern="[0-9]*"
+                    inputMode="numeric"
+                    maxLength={6}
+                    placeholder="Game PIN (e.g. 123456)"
+                    value={pinCode}
+                    onChange={(e) => setPinCode(e.target.value)}
+                    style={{
+                      width: '100%',
+                      padding: '16px',
+                      fontSize: '20px',
+                      fontWeight: 'bold',
+                      borderRadius: '12px',
+                      border: '2px solid rgba(255,255,255,0.08)',
+                      background: 'rgba(0,0,0,0.3)',
+                      color: '#fff',
+                      outline: 'none',
+                      textAlign: 'center'
+                    }}
+                  />
+                </div>
+
+                {authError && (
+                  <div style={{ color: '#ff4d4d', background: 'rgba(255,77,77,0.1)', border: '1px solid rgba(255,77,77,0.2)', padding: '10px', borderRadius: '8px', marginBottom: '20px', fontSize: '13px' }}>
+                    {authError}
+                  </div>
+                )}
+
+                <div style={{ display: 'flex', gap: '15px' }}>
+                  <button
+                    type="button"
+                    className="btn-secondary"
+                    onClick={handleLogout}
+                    style={{ flex: 1, padding: '14px' }}
+                  >
+                    Sign Out
+                  </button>
+                  <button
+                    type="submit"
+                    className="btn-primary"
+                    style={{ flex: 1, padding: '14px', background: 'linear-gradient(135deg, var(--pitch-accent) 0%, #00b0ff 100%)' }}
+                  >
+                    Enter Room ⚽
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        );
+      case 'admin-login':
+        return (
+          <div style={{
+            minHeight: '100vh',
+            display: 'flex',
+            flexDirection: 'column',
+            justifyContent: 'center',
+            alignItems: 'center',
+            background: '#0a0d16',
+            padding: '20px',
+            color: '#fff'
+          }}>
+            <div className="glass-panel" style={{
+              padding: '40px 30px',
+              maxWidth: '400px',
+              width: '100%',
+              textAlign: 'center',
+              borderRadius: '24px',
+              border: '1px solid rgba(255,255,255,0.05)',
+              boxShadow: '0 20px 40px rgba(0,0,0,0.7)'
+            }}>
+              <h2 style={{ fontSize: '24px', fontWeight: '900', marginBottom: '25px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '10px' }}>
+                <Lock size={22} style={{ color: '#00e676' }} /> REFEREE SIGN IN
+              </h2>
+
+              <form onSubmit={handleAdminLogin}>
+                <input
+                  type="text"
+                  placeholder="Username"
+                  value={adminUsername}
+                  onChange={(e) => setAdminUsername(e.target.value)}
+                  style={{
+                    width: '100%',
+                    padding: '14px',
+                    fontSize: '16px',
+                    borderRadius: '12px',
+                    border: '1px solid rgba(255,255,255,0.08)',
+                    background: 'rgba(0,0,0,0.4)',
+                    color: '#fff',
+                    outline: 'none',
+                    marginBottom: '15px'
+                  }}
+                />
+
+                <input
+                  type="password"
+                  placeholder="Password"
+                  value={adminPassword}
+                  onChange={(e) => setAdminPassword(e.target.value)}
+                  style={{
+                    width: '100%',
+                    padding: '14px',
+                    fontSize: '16px',
+                    borderRadius: '12px',
+                    border: '1px solid rgba(255,255,255,0.08)',
+                    background: 'rgba(0,0,0,0.4)',
+                    color: '#fff',
+                    outline: 'none',
+                    marginBottom: '15px'
+                  }}
+                />
+
+                {authError && (
+                  <div style={{ color: '#ff4d4d', background: 'rgba(255,77,77,0.1)', border: '1px solid rgba(255,77,77,0.2)', padding: '10px', borderRadius: '8px', marginBottom: '15px', fontSize: '13px' }}>
+                    {authError}
+                  </div>
+                )}
+
+                <button type="submit" className="btn-primary" style={{ width: '100%', marginBottom: '15px', background: 'linear-gradient(135deg, #00e676 0%, #00b0ff 100%)', color: '#07170f' }}>
+                  Sign In
+                </button>
+
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', marginTop: '10px' }}>
+                  <button type="button" style={{ background: 'none', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer' }} onClick={() => setCurrentView('landing')}>
+                    Back to Play
+                  </button>
+                  <button type="button" style={{ background: 'none', border: 'none', color: '#00e676', cursor: 'pointer', fontWeight: 'bold' }} onClick={() => { setAuthError(''); setCurrentView('admin-register'); }}>
+                    Register Account
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        );
+      case 'admin-register':
+        return (
+          <div style={{
+            minHeight: '100vh',
+            display: 'flex',
+            flexDirection: 'column',
+            justifyContent: 'center',
+            alignItems: 'center',
+            background: '#0a0d16',
+            padding: '20px',
+            color: '#fff'
+          }}>
+            <div className="glass-panel" style={{
+              padding: '40px 30px',
+              maxWidth: '400px',
+              width: '100%',
+              textAlign: 'center',
+              borderRadius: '24px',
+              border: '1px solid rgba(255,255,255,0.05)',
+              boxShadow: '0 20px 40px rgba(0,0,0,0.7)'
+            }}>
+              <h2 style={{ fontSize: '24px', fontWeight: '900', marginBottom: '25px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '10px' }}>
+                <UserPlus size={22} style={{ color: '#a855f7' }} /> ORGANIZER SIGN UP
+              </h2>
+
+              <form onSubmit={handleAdminRegister}>
+                <input
+                  type="text"
+                  placeholder="Username"
+                  value={adminUsername}
+                  onChange={(e) => setAdminUsername(e.target.value)}
+                  style={{
+                    width: '100%',
+                    padding: '14px',
+                    fontSize: '16px',
+                    borderRadius: '12px',
+                    border: '1px solid rgba(255,255,255,0.08)',
+                    background: 'rgba(0,0,0,0.4)',
+                    color: '#fff',
+                    outline: 'none',
+                    marginBottom: '15px'
+                  }}
+                />
+
+                <input
+                  type="password"
+                  placeholder="Password"
+                  value={adminPassword}
+                  onChange={(e) => setAdminPassword(e.target.value)}
+                  style={{
+                    width: '100%',
+                    padding: '14px',
+                    fontSize: '16px',
+                    borderRadius: '12px',
+                    border: '1px solid rgba(255,255,255,0.08)',
+                    background: 'rgba(0,0,0,0.4)',
+                    color: '#fff',
+                    outline: 'none',
+                    marginBottom: '15px'
+                  }}
+                />
+
+                <input
+                  type="text"
+                  placeholder="Event Registration Key"
+                  value={regKey}
+                  onChange={(e) => setRegKey(e.target.value)}
+                  style={{
+                    width: '100%',
+                    padding: '14px',
+                    fontSize: '16px',
+                    borderRadius: '12px',
+                    border: '1px solid rgba(255,255,255,0.08)',
+                    background: 'rgba(0,0,0,0.4)',
+                    color: '#fff',
+                    outline: 'none',
+                    marginBottom: '15px'
+                  }}
+                />
+
+                {authError && (
+                  <div style={{ color: '#ff4d4d', background: 'rgba(255,77,77,0.1)', border: '1px solid rgba(255,77,77,0.2)', padding: '10px', borderRadius: '8px', marginBottom: '15px', fontSize: '13px' }}>
+                    {authError}
+                  </div>
+                )}
+
+                <button type="submit" className="btn-primary" style={{ width: '100%', marginBottom: '15px', background: 'linear-gradient(135deg, #a855f7 0%, #7c3aed 100%)' }}>
+                  Sign Up
+                </button>
+
+                <div style={{ display: 'flex', justifyContent: 'center', fontSize: '13px', marginTop: '10px' }}>
+                  <button type="button" style={{ background: 'none', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer' }} onClick={() => { setAuthError(''); setCurrentView('admin-login'); }}>
+                    Back to Login
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        );
+      case 'admin-hub':
+        return (
+          <div style={{
+            minHeight: '100vh',
+            background: '#070a13',
+            color: '#fff',
+            padding: '40px 20px'
+          }}>
+            <div style={{ maxWidth: '1000px', margin: '0 auto' }}>
+
+              <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '40px', borderBottom: '1px solid rgba(255,255,255,0.08)', paddingBottom: '20px' }}>
+                <div>
+                  <span style={{ fontSize: '13px', textTransform: 'uppercase', color: '#00e676', fontWeight: '800', letterSpacing: '1px' }}>Overview</span>
+                  <h1 style={{ fontSize: '28px', fontWeight: '900', marginTop: '4px' }}>Organizer Hub</h1>
+                </div>
+                <div style={{ display: 'flex', gap: '10px' }}>
+                  <button className="btn-secondary" onClick={() => setShowRecoveryHub(true)} style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#60a5fa', borderColor: 'rgba(96,165,250,0.3)' }}>
+                    <Lock size={16} /> Security & Recovery
+                  </button>
+                  <button className="btn-secondary" onClick={handleLogout} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <LogOut size={16} /> Sign Out
+                  </button>
+                </div>
+              </header>
+
+              <p style={{ color: '#a0aec0', marginBottom: '30px', fontSize: '15px' }}>
+                Select a game to open its presenter view or control board.
+              </p>
+
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(400px, 1fr))', gap: '25px' }}>
+
+                {/* Prediction Challenge Workspace Card */}
+                <div
+                  className="glass-panel"
+                  style={{
+                    padding: '30px',
+                    background: 'rgba(25, 30, 48, 0.55)',
+                    border: '1px solid rgba(255,255,255,0.05)',
+                    borderRadius: '20px',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '20px',
+                    boxShadow: '0 10px 30px rgba(0,0,0,0.3)',
+                    transition: 'transform 0.2s, border-color 0.2s',
+                    cursor: 'default'
+                  }}
+                  onMouseEnter={(e) => { e.currentTarget.style.borderColor = 'rgba(0, 230, 118, 0.3)'; e.currentTarget.style.transform = 'translateY(-2px)'; }}
+                  onMouseLeave={(e) => { e.currentTarget.style.borderColor = 'rgba(255,255,255,0.05)'; e.currentTarget.style.transform = 'translateY(0)'; }}
+                >
+                  <div>
+                    <h3 style={{ fontSize: '22px', fontWeight: '850', color: '#fff' }}>1. Prediction Challenge</h3>
+                    <span style={{ fontSize: '12px', color: '#00e676', background: 'rgba(0, 230, 118, 0.1)', padding: '2px 8px', borderRadius: '20px', display: 'inline-block', marginTop: '6px', fontWeight: 'bold' }}>
+                      Game PIN: 2026
+                    </span>
+                    <p style={{ marginTop: '10px', fontSize: '13px', color: '#a0aec0', lineHeight: '1.4' }}>
+                      Players predict collective behavior to win Fan Tokens. High-suspense screen outputs and Ref settings panel.
+                    </p>
+                  </div>
+
+                  <div style={{ borderTop: '1px solid rgba(255,255,255,0.05)', paddingTop: '20px', display: 'flex', gap: '10px' }}>
+                    <button
+                      className="btn-primary"
+                      style={{ flex: 1, padding: '10px', fontSize: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', background: 'linear-gradient(135deg, #00e676 0%, #00b0ff 100%)', color: '#07170f' }}
+                      onClick={() => {
+                        setRoomId('prediction');
+                        setRoomName('Prediction Challenge');
+                        setAdminMode(true);
+                        setCurrentView('projector');
+                      }}
+                    >
+                      <Play size={14} /> Open Projector (Admin)
+                    </button>
+                    <button
+                      className="btn-secondary"
+                      style={{ flex: 1, padding: '10px', fontSize: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}
+                      onClick={() => {
+                        setRoomId('prediction');
+                        setRoomName('Prediction Challenge');
+                        setAdminMode(true);
+                        setCurrentView('organizer');
+                      }}
+                    >
+                      <Settings size={14} /> Organizer Panel
+                    </button>
+                  </div>
+                </div>
+
+                {/* Python Auction Workspace Card */}
+                <div
+                  className="glass-panel"
+                  style={{
+                    padding: '30px',
+                    background: 'rgba(25, 30, 48, 0.55)',
+                    border: '1px solid rgba(255,255,255,0.05)',
+                    borderRadius: '20px',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '20px',
+                    boxShadow: '0 10px 30px rgba(0,0,0,0.3)',
+                    transition: 'transform 0.2s, border-color 0.2s',
+                    cursor: 'default'
+                  }}
+                  onMouseEnter={(e) => { e.currentTarget.style.borderColor = 'rgba(245, 158, 11, 0.3)'; e.currentTarget.style.transform = 'translateY(-2px)'; }}
+                  onMouseLeave={(e) => { e.currentTarget.style.borderColor = 'rgba(255,255,255,0.05)'; e.currentTarget.style.transform = 'translateY(0)'; }}
+                >
+                  <div>
+                    <h3 style={{ fontSize: '22px', fontWeight: '850', color: '#fff' }}>2. Python Auction</h3>
+                    <span style={{ fontSize: '12px', color: '#f59e0b', background: 'rgba(245, 158, 11, 0.1)', padding: '2px 8px', borderRadius: '20px', display: 'inline-block', marginTop: '6px', fontWeight: 'bold' }}>
+                      Game PIN: 1127
+                    </span>
+                    <p style={{ marginTop: '10px', fontSize: '13px', color: '#a0aec0', lineHeight: '1.4' }}>
+                      Final-day python auction bidding arena. Converts player tokens from predictions into bidding power.
+                  </p>
+                </div>
+
+                <div style={{ borderTop: '1px solid rgba(255,255,255,0.05)', paddingTop: '20px', display: 'flex', gap: '10px' }}>
+                  <button
+                    className="btn-primary"
+                    style={{ flex: 1, padding: '10px', fontSize: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', background: 'linear-gradient(135deg, #f59e0b 0%, #ff5252 100%)', color: '#170c00' }}
+                    onClick={() => {
+                      setRoomId('auction');
+                      setRoomName('Python Auction');
+                      setAdminMode(true);
+                      setCurrentView('projector');
+                    }}
+                  >
+                    <Play size={14} /> Open Projector (Admin)
+                  </button>
+                  <button
+                    className="btn-secondary"
+                    style={{ flex: 1, padding: '10px', fontSize: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', borderColor: 'rgba(245, 158, 11, 0.3)', color: '#f59e0b' }}
+                    onClick={() => {
+                      setRoomId('auction');
+                      setRoomName('Python Auction');
+                      setAdminMode(true);
+                      setCurrentView('organizer');
+                    }}
+                  >
+                    <Settings size={14} /> Organizer Panel
+                  </button>
+                </div>
+              </div>
+
+            </div>
+
+          </div>
+        </div>
+      );
+    case 'player':
         return (
           <PlayerView
             socket={socket}
@@ -1056,6 +1106,131 @@ function App() {
     <>
       <div className="stadium-overlay"></div>
       {renderActiveView()}
+
+      {/* GLOBAL SECURITY & PIN RECOVERY HUB */}
+      {showRecoveryHub && (
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.85)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 10000 }}>
+          <div className="glass-panel" style={{ padding: '30px', maxWidth: '800px', width: '95%', maxHeight: '90vh', display: 'flex', flexDirection: 'column', gap: '20px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--glass-border)', paddingBottom: '10px' }}>
+              <h3 style={{ fontSize: '18px', fontWeight: '800', display: 'flex', alignItems: 'center', gap: '8px', color: '#60a5fa' }}>
+                <Lock size={20} /> Security & Recovery Hub
+              </h3>
+              <button className="btn-secondary" onClick={() => setShowRecoveryHub(false)} style={{ padding: '6px 12px', fontSize: '12px' }}>
+                Close
+              </button>
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '25px', overflowY: 'auto', flex: 1, paddingRight: '5px' }}>
+              {/* Left Side: Player Recovery */}
+              <div>
+                <h4 style={{ fontSize: '14px', fontWeight: 'bold', marginBottom: '10px', color: 'var(--text-secondary)' }}>
+                  🔑 Player PIN Recovery
+                </h4>
+
+                <input
+                  type="text"
+                  className="text-input"
+                  placeholder="Search username..."
+                  value={recoverySearch}
+                  onChange={(e) => setRecoverySearch(e.target.value)}
+                  style={{ marginBottom: '15px', padding: '10px 14px', fontSize: '14px' }}
+                />
+
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '400px', overflowY: 'auto' }}>
+                  {playerAccounts
+                    .filter(acc => acc.username.toLowerCase().includes(recoverySearch.toLowerCase()))
+                    .map(acc => {
+                      const isEditing = editingAccount === acc.username;
+                      return (
+                        <div key={acc.username} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 15px', background: 'rgba(255,255,255,0.03)', border: '1px solid var(--glass-border)', borderRadius: '8px' }}>
+                          <span style={{ fontWeight: 'bold', fontSize: '14px' }}>{acc.username}</span>
+                          
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                            {isEditing ? (
+                              <>
+                                <input
+                                  type="text"
+                                  pattern="[0-9]*"
+                                  inputMode="numeric"
+                                  maxLength={4}
+                                  value={newAccountPin}
+                                  onChange={(e) => setNewAccountPin(e.target.value.replace(/\D/g, ''))}
+                                  placeholder="New PIN"
+                                  style={{
+                                    width: '80px',
+                                    padding: '6px 10px',
+                                    fontSize: '13px',
+                                    background: 'rgba(0,0,0,0.5)',
+                                    border: '1px solid var(--pitch-accent)',
+                                    borderRadius: '6px',
+                                    color: '#fff',
+                                    textAlign: 'center'
+                                  }}
+                                />
+                                <button
+                                  className="btn-primary"
+                                  onClick={() => handleUpdatePlayerPin(acc.username, newAccountPin)}
+                                  style={{ padding: '6px 10px', fontSize: '11px', display: 'inline-block', width: 'auto' }}
+                                >
+                                  Save
+                                </button>
+                                <button
+                                  className="btn-secondary"
+                                  onClick={() => setEditingAccount(null)}
+                                  style={{ padding: '6px 10px', fontSize: '11px', display: 'inline-block', width: 'auto' }}
+                                >
+                                  Cancel
+                                </button>
+                              </>
+                            ) : (
+                              <>
+                                <span style={{ fontSize: '13px', color: '#a7f3d0', fontFamily: 'monospace', letterSpacing: '2px', fontWeight: 'bold' }}>
+                                  PIN: {acc.pin}
+                                </span>
+                                <button
+                                  onClick={() => {
+                                    setEditingAccount(acc.username);
+                                    setNewAccountPin(acc.pin);
+                                  }}
+                                  style={{ background: 'none', border: 'none', color: '#60a5fa', cursor: 'pointer', display: 'flex', alignItems: 'center' }}
+                                  title="Change PIN"
+                                >
+                                  <Edit size={14} />
+                                </button>
+                              </>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+
+                  {playerAccounts.length === 0 && (
+                    <div style={{ textAlign: 'center', color: 'var(--text-muted)', padding: '20px 0', fontSize: '13px' }}>
+                      No registered player accounts found.
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Right Side: Organizer List */}
+              <div style={{ borderLeft: '1px solid var(--glass-border)', paddingLeft: '20px' }}>
+                <h4 style={{ fontSize: '14px', fontWeight: 'bold', marginBottom: '15px', color: 'var(--text-secondary)' }}>
+                  🛡️ Registered Admins
+                </h4>
+
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '450px', overflowY: 'auto' }}>
+                  {organizersList.map(adminName => (
+                    <div key={adminName} style={{ padding: '10px 15px', background: 'rgba(255,255,255,0.03)', border: '1px solid var(--glass-border)', borderRadius: '8px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <span style={{ width: '8px', height: '8px', background: 'var(--pitch-accent)', borderRadius: '50%' }}></span>
+                      <span style={{ fontSize: '13px', fontWeight: 'bold' }}>{adminName}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </>
   );
 }
