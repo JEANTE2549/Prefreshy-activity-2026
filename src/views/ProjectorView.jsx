@@ -23,7 +23,8 @@ const CanvasQRCode = ({ url }) => {
   return <canvas ref={canvasRef} style={{ borderRadius: '12px', border: '5px solid var(--gold-trophy)', boxShadow: '0 0 20px var(--gold-glow)', maxWidth: '100%', height: 'auto' }} />;
 };
 
-function ProjectorView({ socket, gameState, standings, roomId, roomName, adminMode, adminToken, onBackToHub }) {
+function ProjectorView({ socket, gameState, standings: rawStandings, roomId, roomName, adminMode, adminToken, onBackToHub }) {
+  const standings = Array.isArray(rawStandings) ? rawStandings : [];
   const [joinUrl, setJoinUrl] = useState('');
   
   // Calculate Join URL based on browser location
@@ -53,7 +54,7 @@ function ProjectorView({ socket, gameState, standings, roomId, roomName, adminMo
     }
   });
 
-  const renderAuctionMode = () => {
+  function renderAuctionMode() {
     const currentPrice = gameState.currentBid || 10;
     const activeQuestion = gameState.activeQuestion;
     const isAnswering = gameState.gameState === 'AUCTION_ANSWERING' || gameState.gameState === 'AUCTION_ANSWERED';
@@ -165,13 +166,34 @@ function ProjectorView({ socket, gameState, standings, roomId, roomName, adminMo
 
       return (
         <div className="app-container" style={{ maxWidth: '1400px', padding: '30px', minHeight: '95vh', display: 'flex', flexDirection: 'column', justifyContent: 'space-between', background: 'radial-gradient(circle at 50% 10%, rgba(255, 215, 0, 0.08) 0%, transparent 60%)' }}>
-          <header style={{ textAlign: 'center', marginBottom: '30px' }}>
-            <span style={{ fontSize: '14px', background: 'rgba(255,215,0,0.1)', border: '1px solid var(--gold-trophy)', padding: '6px 20px', borderRadius: '25px', color: 'var(--gold-trophy)', fontWeight: 'bold', textTransform: 'uppercase', letterSpacing: '2px', animation: 'gold-pulse 2s infinite' }}>
-              🏆 GRAND FINALE CHAMPIONSHIP 🏆
-            </span>
-            <h1 style={{ fontSize: '48px', fontWeight: '950', color: '#fff', marginTop: '15px', textTransform: 'uppercase', letterSpacing: '2px' }}>
-              Python Arena Podium
-            </h1>
+          <header className="glass-panel" style={{ padding: '15px 30px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '25px', borderTop: '3px solid var(--gold-trophy)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '15px' }}>
+              <span style={{ fontSize: '32px' }}>🏆</span>
+              <div>
+                <h1 style={{ fontSize: '24px', fontWeight: '950', textTransform: 'uppercase', letterSpacing: '1px', color: '#fff' }}>
+                  Python Arena Podium
+                </h1>
+                <span style={{ fontSize: '12px', color: 'var(--gold-trophy)', fontWeight: 'bold' }}>
+                  GRAND FINALE CHAMPIONSHIP
+                </span>
+              </div>
+            </div>
+            
+            <div style={{ display: 'flex', gap: '15px', alignItems: 'center' }}>
+              {adminMode && (
+                <>
+                  <button type="button" className="btn-secondary" onClick={() => { if (confirm("Reset whole auction game and go back to lobby?")) socket.emit('admin-next-auction-match', { roomId, adminToken }); }} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '8px 16px', fontSize: '13px', borderColor: 'rgba(255,215,0,0.3)', color: 'var(--gold-trophy)' }}>
+                    Reset to Lobby 🔄
+                  </button>
+                  <button type="button" className="btn-secondary" onClick={onBackToHub} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '8px 16px', fontSize: '13px' }}>
+                    <ArrowLeft size={14} /> Back to Hub
+                  </button>
+                </>
+              )}
+              <span style={{ fontSize: '12px', background: 'rgba(255,255,255,0.05)', padding: '6px 15px', borderRadius: '20px', color: 'var(--text-secondary)' }}>
+                GRAND FINALE SCREEN
+              </span>
+            </div>
           </header>
 
           <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'flex-end', gap: '30px', flex: 1, marginBottom: '50px' }}>
@@ -455,7 +477,7 @@ function ProjectorView({ socket, gameState, standings, roomId, roomName, adminMo
                       className="btn-secondary"
                       onClick={() => {
                         if (confirm("Cancel this container bidding?")) {
-                          socket.emit('admin-cancel-bidding', { roomId, adminToken });
+                          socket.emit('admin-close-bidding', { roomId, adminToken });
                         }
                       }}
                       style={{ padding: '12px 20px', fontSize: '14px', borderColor: 'rgba(255,23,68,0.3)', color: '#ff4d4d' }}
@@ -600,13 +622,41 @@ function ProjectorView({ socket, gameState, standings, roomId, roomName, adminMo
                     else if (idx === 2) rankText = '🥉';
                     
                     return (
-                      <tr key={g.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.03)' }}>
-                        <td style={{ padding: '12px 0', fontWeight: 'bold', fontSize: '15px' }}>{rankText}</td>
-                        <td style={{ padding: '12px 0', fontWeight: 'bold', fontSize: '15px' }}>{g.name}</td>
-                        <td className="gold-token" style={{ padding: '12px 0', textAlign: 'right', fontWeight: 'bold', fontSize: '15px' }}>
-                          {g.tokens} 🪙
-                        </td>
-                      </tr>
+                      <React.Fragment key={g.id}>
+                        <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.03)' }}>
+                          <td style={{ padding: '12px 0', fontWeight: 'bold', fontSize: '15px' }}>{rankText}</td>
+                          <td style={{ padding: '12px 0', fontWeight: 'bold', fontSize: '15px' }}>{g.name}</td>
+                          <td className="gold-token" style={{ padding: '12px 0', textAlign: 'right', fontWeight: 'bold', fontSize: '15px' }}>
+                            {g.tokens} 🪙
+                          </td>
+                        </tr>
+                        {g.playerIds && g.playerIds.length > 0 && (
+                          <tr>
+                            <td></td>
+                            <td colSpan={2} style={{ paddingBottom: '10px' }}>
+                              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px 8px' }}>
+                                {g.playerIds.map(pId => {
+                                  const player = standings.find(p => p.id === pId);
+                                  const isCaptain = g.bidderId === pId;
+                                  return (
+                                    <span key={pId} style={{
+                                      fontSize: '11px',
+                                      color: isCaptain ? '#ffb300' : 'var(--text-muted)',
+                                      fontWeight: isCaptain ? 'bold' : 'normal',
+                                      display: 'inline-flex',
+                                      alignItems: 'center',
+                                      gap: '3px'
+                                    }}>
+                                      {isCaptain && <span style={{ fontSize: '10px' }}>👑</span>}
+                                      {player?.name || pId}
+                                    </span>
+                                  );
+                                })}
+                              </div>
+                            </td>
+                          </tr>
+                        )}
+                      </React.Fragment>
                     );
                   })}
                   {sortedGroups.length === 0 && (
@@ -639,7 +689,7 @@ function ProjectorView({ socket, gameState, standings, roomId, roomName, adminMo
   const sortedQuestions = gameState.questions || [];
 
   // Helper to render customized layout with alignment checker
-  const renderQuestionCard = (q, textStyle = {}) => {
+  function renderQuestionCard(q, textStyle = {}) {
     if (!q) return null;
 
     const imgEl = q.imageUrl ? (

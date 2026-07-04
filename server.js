@@ -37,7 +37,71 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 // In-memory data copy
 let dbInMemory = {};
 let roomsState = {};
-const adminSessions = new Set();
+
+const JWT_SECRET = process.env.JWT_SECRET || 'super-secret-key-1127-2026';
+
+function base64UrlEncode(str) {
+  return Buffer.from(str)
+    .toString('base64')
+    .replace(/=/g, '')
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_');
+}
+
+function base64UrlDecode(str) {
+  let base64 = str.replace(/-/g, '+').replace(/_/g, '/');
+  while (base64.length % 4) {
+    base64 += '=';
+  }
+  return Buffer.from(base64, 'base64').toString();
+}
+
+function signJwt(payload) {
+  const header = { alg: 'HS256', typ: 'JWT' };
+  const encodedHeader = base64UrlEncode(JSON.stringify(header));
+  const fullPayload = {
+    ...payload,
+    exp: Date.now() + 24 * 60 * 60 * 1000 // 24 hours expiry
+  };
+  const encodedPayload = base64UrlEncode(JSON.stringify(fullPayload));
+  
+  const signature = crypto
+    .createHmac('sha256', JWT_SECRET)
+    .update(`${encodedHeader}.${encodedPayload}`)
+    .digest('base64')
+    .replace(/=/g, '')
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_');
+    
+  return `${encodedHeader}.${encodedPayload}.${signature}`;
+}
+
+function verifyJwt(token) {
+  if (!token) return null;
+  const parts = token.split('.');
+  if (parts.length !== 3) return null;
+  
+  const [encodedHeader, encodedPayload, signature] = parts;
+  const expectedSignature = crypto
+    .createHmac('sha256', JWT_SECRET)
+    .update(`${encodedHeader}.${encodedPayload}`)
+    .digest('base64')
+    .replace(/=/g, '')
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_');
+    
+  if (signature !== expectedSignature) return null;
+  
+  try {
+    const payload = JSON.parse(base64UrlDecode(encodedPayload));
+    if (payload.exp && Date.now() > payload.exp) {
+      return null;
+    }
+    return payload;
+  } catch (e) {
+    return null;
+  }
+}
 
 // Load database from Supabase
 async function initDb() {
@@ -54,11 +118,6 @@ async function initDb() {
     }
 
     let db = data ? data.value : {};
-
-    adminSessions.clear();
-    if (db.adminSessions && Array.isArray(db.adminSessions)) {
-      db.adminSessions.forEach(t => adminSessions.add(t));
-    }
 
     // Run schema migrations/setup if empty
     if (!db.adminPassword) db.adminPassword = '1234';
@@ -267,10 +326,11 @@ async function initDb() {
         currentBid: r.currentBid || 10,
         highestBidder: r.highestBidder || null,
         auctionWinner: r.auctionWinner || null,
+        teamsLocked: r.teamsLocked || false,
         groups: r.groups || {
-          "A": { id: "A", name: "Team A", playerIds: [], tokens: 100, itemsWon: [] },
-          "B": { id: "B", name: "Team B", playerIds: [], tokens: 100, itemsWon: [] },
-          "C": { id: "C", name: "Team C", playerIds: [], tokens: 100, itemsWon: [] }
+          "A": { id: "A", name: "Team A", playerIds: [], tokens: 100, itemsWon: [], bidderId: null },
+          "B": { id: "B", name: "Team B", playerIds: [], tokens: 100, itemsWon: [], bidderId: null },
+          "C": { id: "C", name: "Team C", playerIds: [], tokens: 100, itemsWon: [], bidderId: null }
         }
       };
     });
@@ -289,7 +349,6 @@ async function saveDbToSupabase() {
       adminPassword: dbInMemory.adminPassword || '1234',
       organizers: dbInMemory.organizers || { "admin": "admin", "Jean": "J2710" },
       accounts: dbInMemory.accounts || {},
-      adminSessions: Array.from(adminSessions),
       rooms: {}
     };
 
@@ -311,6 +370,7 @@ async function saveDbToSupabase() {
         currentBid: r.currentBid || 10,
         highestBidder: r.highestBidder || null,
         auctionWinner: r.auctionWinner || null,
+        teamsLocked: r.teamsLocked || false,
         groups: r.groups || null
       };
     });
@@ -383,7 +443,8 @@ function getRoomById(id) {
 }
 
 function verifyAdminToken(token) {
-  return token && adminSessions.has(token);
+  const decoded = verifyJwt(token);
+  return decoded ? true : false;
 }
 
 const RUDE_WORDS = [
@@ -479,8 +540,7 @@ app.post('/api/login', (req, res) => {
   const { username, password } = req.body;
   if (!dbInMemory.organizers) dbInMemory.organizers = { "admin": "admin", "Jean": "J2710" };
   if (dbInMemory.organizers[username] && dbInMemory.organizers[username] === password) {
-    const token = crypto.randomUUID();
-    adminSessions.add(token);
+    const token = signJwt({ username });
     res.json({ success: true, token });
   } else {
     res.status(401).json({ error: 'Incorrect username or password.' });
@@ -501,10 +561,6 @@ app.post('/api/player/register', (req, res) => {
 
   if (!/^\d{4}$/.test(pin)) {
     return res.status(400).json({ error: 'PIN must be exactly 4 digits.' });
-  }
-
-  if (isRudeName(trimmedUsername)) {
-    return res.status(400).json({ error: 'Please use a commonly accepted nickname!' });
   }
 
   if (!dbInMemory.accounts) dbInMemory.accounts = {};
@@ -698,7 +754,12 @@ io.on('connection', (socket) => {
       questions: room.questions,
       standings: getSortedPlayers(room),
       pin: room.pin,
-      groups: room.groups
+      groups: room.groups,
+      teamsLocked: room.teamsLocked || false,
+      openQuestions: room.openQuestions || [],
+      currentBid: room.currentBid || 10,
+      highestBidder: room.highestBidder || null,
+      auctionWinner: room.auctionWinner || null
     });
   });
 
@@ -720,8 +781,13 @@ io.on('connection', (socket) => {
     const normalized = trimmedName.toLowerCase();
 
     // Verify that player account exists
-    if (!dbInMemory.accounts || !dbInMemory.accounts[normalized]) {
-      return callback?.({ success: false, error: 'This username does not exist!' });
+    if (!dbInMemory.accounts || !dbInMemory.accounts[id.toLowerCase()]) {
+      return callback?.({ success: false, error: 'This player account does not exist!' });
+    }
+
+    // Server-side check for rude names (Guardian System)
+    if (isRudeName(trimmedName)) {
+      return callback?.({ success: false, error: 'Please use a polite and appropriate game username!' });
     }
 
     // Server-side check for duplicate nickname
@@ -1864,6 +1930,28 @@ io.on('connection', (socket) => {
   socket.on('admin-save-groups', ({ roomId, groups }, callback) => {
     const room = getRoomById(roomId);
     if (!room) return callback?.({ success: false, error: 'Room not found.' });
+    if (room.teamsLocked) {
+      return callback?.({ success: false, error: 'Teams are locked. Unlock teams to make changes.' });
+    }
+
+    // Recalculate tokens as weighted average of members' prediction tokens
+    Object.values(groups).forEach(g => {
+      if (g.playerIds.length > 0) {
+        const totalTokens = g.playerIds.reduce((sum, pId) => {
+          const player = room.players[pId];
+          return sum + (player ? player.fanTokens : 0);
+        }, 0);
+        g.tokens = Math.round(totalTokens / g.playerIds.length);
+        // Auto-assign bidderId to first member if not already set or invalid
+        if (!g.bidderId || !g.playerIds.includes(g.bidderId)) {
+          g.bidderId = g.playerIds[0];
+        }
+      } else {
+        g.tokens = 100;
+        g.bidderId = null;
+      }
+    });
+
     room.groups = groups;
     syncDb();
     io.to(roomId).emit('groups-update', room.groups);
@@ -1874,16 +1962,20 @@ io.on('connection', (socket) => {
   socket.on('admin-autofill-groups', ({ roomId }, callback) => {
     const room = getRoomById(roomId);
     if (!room) return callback?.({ success: false, error: 'Room not found.' });
+    if (room.teamsLocked) {
+      return callback?.({ success: false, error: 'Teams are locked. Unlock teams before auto-filling.' });
+    }
 
     const activePlayers = Object.values(room.players);
     const sorted = [...activePlayers].sort((a, b) => b.fanTokens - a.fanTokens);
 
     const groups = {
-      "A": { id: "A", name: "Team A", playerIds: [], tokens: 0, itemsWon: [] },
-      "B": { id: "B", name: "Team B", playerIds: [], tokens: 0, itemsWon: [] },
-      "C": { id: "C", name: "Team C", playerIds: [], tokens: 0, itemsWon: [] }
+      "A": { id: "A", name: "Team A", playerIds: [], tokens: 0, itemsWon: [], bidderId: null },
+      "B": { id: "B", name: "Team B", playerIds: [], tokens: 0, itemsWon: [], bidderId: null },
+      "C": { id: "C", name: "Team C", playerIds: [], tokens: 0, itemsWon: [], bidderId: null }
     };
 
+    // Round-robin fill by lowest current sum (for balanced distribution)
     sorted.forEach(player => {
       const lowestGroup = Object.values(groups).reduce((minG, g) => {
         if (!minG) return g;
@@ -1894,9 +1986,15 @@ io.on('connection', (socket) => {
       lowestGroup.tokens += player.fanTokens;
     });
 
+    // Convert summed tokens to average (Prediction Weighted Average)
     Object.values(groups).forEach(g => {
-      if (g.playerIds.length === 0) {
+      if (g.playerIds.length > 0) {
+        g.tokens = Math.round(g.tokens / g.playerIds.length);
+        // Auto-assign first member as team captain/bidder
+        g.bidderId = g.playerIds[0];
+      } else {
         g.tokens = 100;
+        g.bidderId = null;
       }
     });
 
@@ -1904,6 +2002,68 @@ io.on('connection', (socket) => {
     syncDb();
     io.to(roomId).emit('groups-update', room.groups);
     callback?.({ success: true, groups: room.groups });
+  });
+
+  // Set team bidder (captain) - allows organizer to reassign
+  socket.on('admin-set-team-bidder', ({ roomId, teamId, bidderId }, callback) => {
+    const room = getRoomById(roomId);
+    if (!room) return callback?.({ success: false, error: 'Room not found.' });
+    if (room.teamsLocked) {
+      return callback?.({ success: false, error: 'Teams are locked. Unlock teams to change captains.' });
+    }
+
+    const team = room.groups && room.groups[teamId];
+    if (!team) return callback?.({ success: false, error: 'Team not found.' });
+
+    if (!team.playerIds.includes(bidderId)) {
+      return callback?.({ success: false, error: 'Player is not a member of this team.' });
+    }
+
+    team.bidderId = bidderId;
+    syncDb();
+    io.to(roomId).emit('groups-update', room.groups);
+    callback?.({ success: true });
+  });
+
+  // Lock team assignments so they persist and cannot be changed accidentally
+  socket.on('admin-lock-teams', ({ roomId }, callback) => {
+    const room = getRoomById(roomId);
+    if (!room) return callback?.({ success: false, error: 'Room not found.' });
+    if (!room.groups) {
+      return callback?.({ success: false, error: 'No teams configured.' });
+    }
+
+    Object.values(room.groups).forEach(g => {
+      if (g.playerIds.length > 0) {
+        const totalTokens = g.playerIds.reduce((sum, pId) => {
+          const player = room.players[pId];
+          return sum + (player ? player.fanTokens : 0);
+        }, 0);
+        g.tokens = Math.round(totalTokens / g.playerIds.length);
+        if (!g.bidderId || !g.playerIds.includes(g.bidderId)) {
+          g.bidderId = g.playerIds[0];
+        }
+      } else {
+        g.tokens = 100;
+        g.bidderId = null;
+      }
+    });
+
+    room.teamsLocked = true;
+    syncDb();
+    io.to(roomId).emit('teams-locked-update', { teamsLocked: true, groups: room.groups });
+    callback?.({ success: true, groups: room.groups });
+  });
+
+  // Unlock team assignments for editing
+  socket.on('admin-unlock-teams', ({ roomId }, callback) => {
+    const room = getRoomById(roomId);
+    if (!room) return callback?.({ success: false, error: 'Room not found.' });
+
+    room.teamsLocked = false;
+    syncDb();
+    io.to(roomId).emit('teams-locked-update', { teamsLocked: false, groups: room.groups });
+    callback?.({ success: true });
   });
 
   // Start Traditional Bidding on a Container
@@ -1934,7 +2094,7 @@ io.on('connection', (socket) => {
   });
 
   // Submit Bid increment (+5 tokens)
-  socket.on('submit-bid', ({ roomId, teamId }, callback) => {
+  socket.on('submit-bid', ({ roomId, teamId, playerId }, callback) => {
     const room = getRoomById(roomId);
     if (!room) return callback?.({ success: false, error: 'Room not found.' });
 
@@ -1944,6 +2104,11 @@ io.on('connection', (socket) => {
 
     const team = room.groups && room.groups[teamId];
     if (!team) return callback?.({ success: false, error: 'Team not found.' });
+
+    // Verify caller is the designated Team Bidder (captain)
+    if (team.bidderId && playerId && team.bidderId !== playerId) {
+      return callback?.({ success: false, error: 'Only the designated Team Bidder can place bids!' });
+    }
 
     const nextBid = room.currentBid + 5;
     if (team.tokens < nextBid) {

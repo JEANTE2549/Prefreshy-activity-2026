@@ -1,9 +1,19 @@
 import React, { useState, useEffect } from 'react';
 import { Award, Coins, Flame, Check, X, ShieldAlert, Sparkles, History, User, LogOut } from 'lucide-react';
 
-function PlayerView({ socket, playerId, gameState, standings, roomId, roomName, onLeaveRoom }) {
+const RUDE_WORDS = [
+  'ควย', 'เย็ด', 'หี', 'แตด', 'หำ', 'มึง', 'กู', 'เหี้ย', 'สัส', 'สัด', 'ระยำ', 'ชาติหมา', 'ดอกทอง', 'แรด',
+  'fuck', 'shit', 'bitch', 'cunt', 'pussy', 'dick', 'asshole', 'พ่อง', 'ตาย', 'แม่ง', 'ลูกกระหรี่', 'อีดอก'
+];
+
+function isRudeName(name) {
+  if (!name) return false;
+  const normalized = name.toLowerCase().replace(/[\s\.\-\_\@]/g, '');
+  return RUDE_WORDS.some(word => normalized.includes(word));
+}
+
+function PlayerView({ socket, playerId, nickname, setNickname, gameState, standings, roomId, roomName, onLeaveRoom }) {
   const [joined, setJoined] = useState(false);
-  const [nickname, setNickname] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [playerInfo, setPlayerInfo] = useState(null);
 
@@ -34,14 +44,12 @@ function PlayerView({ socket, playerId, gameState, standings, roomId, roomName, 
   }, [gameState.currentQuestionId, gameState.gameState]);
 
   // Find player profile in standings
-  const activeProfile = standings.find(p => p.id === playerId);
+  const activeProfile = Array.isArray(standings) ? standings.find(p => p.id === playerId) : null;
 
-  // Auto-join if nickname is in localStorage
+  // Auto-join if nickname is already present in state
   useEffect(() => {
-    const savedName = localStorage.getItem('python_wc_player_username') || localStorage.getItem('python_wc_player_name');
-    if (savedName && playerId) {
-      setNickname(savedName);
-      handleJoin(savedName);
+    if (nickname && playerId) {
+      handleJoin(nickname);
     }
   }, [playerId]);
 
@@ -60,13 +68,20 @@ function PlayerView({ socket, playerId, gameState, standings, roomId, roomName, 
 
   const handleJoin = (nameToJoin) => {
     if (!nameToJoin.trim()) return;
+    
+    // Client-side Rude Word Validation (Guardian System)
+    if (isRudeName(nameToJoin)) {
+      setErrorMessage('Please use a polite and appropriate username!');
+      return;
+    }
+
     setSubmitting(true);
     socket.emit('join-game', { roomId, id: playerId, name: nameToJoin }, (res) => {
       setSubmitting(false);
       if (res.success) {
         setJoined(true);
         setPlayerInfo(res.player);
-        localStorage.setItem('python_wc_player_name', nameToJoin);
+        localStorage.setItem('python_wc_player_nickname', nameToJoin);
         // If a submission exists for current question
         if (res.submissions) {
           setAnswer(res.submissions.answer);
@@ -353,7 +368,7 @@ function PlayerView({ socket, playerId, gameState, standings, roomId, roomName, 
                 <div style={{ textAlign: 'center', padding: '40px 20px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '20px' }}>
                   <div style={{ fontSize: '50px', animation: 'pulse-glow 2s infinite' }}>⏳</div>
                   <h2 style={{ fontSize: '20px', fontWeight: '800' }}>
-                    {standings.find(p => p.id === gameState.auctionWinner)?.name || 'Another Team'} is Answering
+                    {(Array.isArray(standings) && standings.find(p => p.id === gameState.auctionWinner)?.name) || 'Another Team'} is Answering
                   </h2>
                   <p style={{ color: 'var(--text-secondary)', maxWidth: '300px', margin: '0 auto' }}>
                     They bought the {gameState.activeQuestion?.difficulty} Match question for **{currentPrice} tokens**. Let's see if they get it right!
@@ -391,7 +406,7 @@ function PlayerView({ socket, playerId, gameState, standings, roomId, roomName, 
               ) : (
                 <div style={{ background: 'rgba(255,255,255,0.05)', padding: '20px', borderRadius: '12px', border: '1px solid var(--glass-border)' }}>
                   <strong style={{ color: 'var(--pitch-accent)', fontSize: '16px' }}>
-                    {standings.find(p => p.id === gameState.lastResults?.winnerId)?.name || 'The bidding team'}
+                    {(Array.isArray(standings) && standings.find(p => p.id === gameState.lastResults?.winnerId)?.name) || 'The bidding team'}
                   </strong>
                   {gameState.lastResults?.isCorrect ? (
                     <div style={{ fontSize: '20px', color: 'var(--pitch-accent)', fontWeight: 'bold', marginTop: '5px' }}>
@@ -487,7 +502,7 @@ function PlayerView({ socket, playerId, gameState, standings, roomId, roomName, 
                 <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '10px' }}>ROUND PAYOUTS</div>
                 {Object.keys(gameState.lastResults?.submissions || {}).map(pId => {
                   const pSub = gameState.lastResults?.submissions[pId];
-                  const pObj = standings.find(p => p.id === pId);
+                  const pObj = Array.isArray(standings) ? standings.find(p => p.id === pId) : null;
                   const isPcorrect = pSub?.answer === gameState.lastResults?.correctAnswer;
                   
                   return (
@@ -513,7 +528,49 @@ function PlayerView({ socket, playerId, gameState, standings, roomId, roomName, 
   };
 
   if (roomId === 'auction') {
-    return renderAuctionMode();
+    return (
+      <div className="app-container" style={{ display: 'flex', flexDirection: 'column', minHeight: '90vh' }}>
+        {/* Header HUD */}
+        <header className="glass-panel" style={{ padding: '15px 20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', borderTop: '3px solid #f59e0b' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <div style={{ background: 'rgba(255,255,255,0.05)', padding: '8px', borderRadius: '50%' }}>
+              <User size={20} className="gold-token" />
+            </div>
+            <div>
+              <h4 style={{ fontWeight: '800', fontSize: '16px' }}>{activeProfile?.name || nickname}</h4>
+              <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+                <div className="rank-indicator" style={{ fontSize: '12px', background: 'rgba(245, 158, 11, 0.1)', color: '#f59e0b' }}>
+                  <Award size={12} /> Rank #{activeProfile?.currentRank || '-'}
+                </div>
+                <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>•</span>
+                <span style={{ fontSize: '11px', color: '#f59e0b', fontWeight: 'bold' }}>{roomName}</span>
+              </div>
+            </div>
+          </div>
+
+          <div style={{ display: 'flex', gap: '15px', alignItems: 'center' }}>
+            <div style={{ textAlign: 'right' }}>
+              <div style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>FAN TOKENS</div>
+              <div className="gold-token" style={{ fontSize: '20px', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                <Coins size={18} /> {activeProfile?.fanTokens || 100}
+              </div>
+            </div>
+            <button
+              onClick={onLeaveRoom}
+              style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', padding: '6px', marginLeft: '5px' }}
+              title="Leave Room"
+            >
+              <LogOut size={18} />
+            </button>
+          </div>
+        </header>
+
+        {/* Game Area */}
+        <main style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '20px', marginBottom: '20px' }}>
+          {renderAuctionPlayerView()}
+        </main>
+      </div>
+    );
   }
 
   // Calculate statistics
@@ -570,7 +627,7 @@ function PlayerView({ socket, playerId, gameState, standings, roomId, roomName, 
     );
   };
 
-  const renderAuctionPlayerView = () => {
+  function renderAuctionPlayerView() {
     const myGroup = Object.values(gameState.groups || {}).find(g => g.playerIds.includes(playerId));
     const myGroupId = myGroup ? myGroup.id : null;
     const myGroupName = myGroup ? myGroup.name : 'No Team Assigned';
@@ -584,7 +641,7 @@ function PlayerView({ socket, playerId, gameState, standings, roomId, roomName, 
 
     const handlePlaceBid = () => {
       if (!myGroupId) return alert("You are not assigned to a team yet. Ask the Organizer!");
-      socket.emit('submit-bid', { roomId, teamId: myGroupId }, (res) => {
+      socket.emit('submit-bid', { roomId, teamId: myGroupId, playerId }, (res) => {
         if (!res.success) {
           alert(res.error);
         }
@@ -659,23 +716,58 @@ function PlayerView({ socket, playerId, gameState, standings, roomId, roomName, 
               </div>
             </div>
 
-            <button
-              onClick={handlePlaceBid}
-              disabled={isLeading || myGroupTokens < (currentPrice + 5)}
-              className="btn-primary"
-              style={{
-                width: '100%',
-                padding: '16px',
-                background: isLeading ? 'rgba(255,255,255,0.05)' : 'linear-gradient(135deg, #00b0ff 0%, #00e676 100%)',
-                color: isLeading ? 'var(--text-muted)' : 'black',
-                fontWeight: 'bold',
-                fontSize: '18px',
-                border: 'none',
-                boxShadow: isLeading ? 'none' : '0 4px 15px rgba(0, 230, 118, 0.2)'
-              }}
-            >
-              {isLeading ? 'YOU HOLD HIGH BID' : `BID +5 TOKENS (Cost: ${currentPrice + 5} 🪙)`}
-            </button>
+            {(() => {
+              const isBidder = myGroup && myGroup.bidderId === playerId;
+              const bidderName = myGroup && myGroup.bidderId && Array.isArray(standings) ? (standings.find(p => p.id === myGroup.bidderId)?.name || 'Captain') : 'Captain';
+              
+              if (!isBidder && myGroup && myGroup.bidderId) {
+                return (
+                  <div style={{
+                    width: '100%',
+                    padding: '16px 20px',
+                    background: 'linear-gradient(135deg, rgba(255, 179, 0, 0.08) 0%, rgba(245, 158, 11, 0.04) 100%)',
+                    border: '1px solid rgba(255, 179, 0, 0.25)',
+                    borderRadius: '12px',
+                    textAlign: 'center',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '8px',
+                    alignItems: 'center'
+                  }}>
+                    <span style={{ fontSize: '28px' }}>👑</span>
+                    <strong style={{ fontSize: '14px', color: '#ffb300' }}>
+                      Consult with your Team Bidder
+                    </strong>
+                    <span style={{ fontSize: '16px', color: '#fff', fontWeight: 'bold' }}>
+                      {bidderName}
+                    </span>
+                    <span style={{ fontSize: '11px', color: 'var(--text-secondary)', lineHeight: '1.4' }}>
+                      Only the designated Team Bidder can place bids. Discuss strategy with your captain!
+                    </span>
+                  </div>
+                );
+              }
+              
+              return (
+                <button
+                  onClick={handlePlaceBid}
+                  disabled={isLeading || myGroupTokens < (currentPrice + 5)}
+                  className="btn-primary"
+                  style={{
+                    width: '100%',
+                    padding: '16px',
+                    background: isLeading ? 'rgba(255,255,255,0.05)' : 'linear-gradient(135deg, #00b0ff 0%, #00e676 100%)',
+                    color: isLeading ? 'var(--text-muted)' : 'black',
+                    fontWeight: 'bold',
+                    fontSize: '18px',
+                    border: 'none',
+                    boxShadow: isLeading ? 'none' : '0 4px 15px rgba(0, 230, 118, 0.2)'
+                  }}
+                >
+                  {isLeading ? 'YOU HOLD HIGH BID' : `BID +5 TOKENS (Cost: ${currentPrice + 5} 🪙)`}
+                </button>
+              );
+            })()}
           </div>
         )}
 

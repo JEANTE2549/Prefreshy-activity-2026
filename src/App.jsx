@@ -19,13 +19,41 @@ function isRudeName(name) {
   return RUDE_WORDS.some(word => normalized.includes(word));
 }
 
+const parseRoute = () => {
+  const path = window.location.pathname;
+  const parts = path.split('/').filter(Boolean);
+
+  if (parts[0] === 'projector') {
+    return { view: 'projector', roomId: parts[1] || 'prediction' };
+  }
+  if (parts[0] === 'organizer') {
+    return { view: 'organizer', roomId: parts[1] || 'prediction' };
+  }
+  if (parts[0] === 'admin') {
+    return { view: 'admin-hub', roomId: '' };
+  }
+  if (parts[0] === 'login') {
+    return { view: 'admin-login', roomId: '' };
+  }
+  if (parts[0] === 'register') {
+    return { view: 'admin-register', roomId: '' };
+  }
+  if (parts[0] === 'play') {
+    return { view: 'player', roomId: parts[1] || 'prediction' };
+  }
+  return { view: 'landing', roomId: '' };
+};
+
 function App() {
-  const [currentView, setCurrentView] = useState('landing'); // landing | player-name | admin-login | admin-register | admin-hub | player | projector | organizer | auction
+  const initialRoute = parseRoute();
+  const [currentView, setCurrentView] = useState(initialRoute.view); // landing | player-name | admin-login | admin-register | admin-hub | player | projector | organizer | auction
 
   // Player Auth State
   const [pinCode, setPinCode] = useState('');
-  const [nickname, setNickname] = useState('');
-  const [roomId, setRoomId] = useState('');
+  const [nickname, setNickname] = useState(() => localStorage.getItem('python_wc_player_nickname') || '');
+  const [playerAccountUsername, setPlayerAccountUsername] = useState('');
+  const [playerAccountPin, setPlayerAccountPin] = useState('');
+  const [roomId, setRoomId] = useState(initialRoute.roomId);
   const [roomName, setRoomName] = useState('');
 
   // Admin Auth State
@@ -67,6 +95,46 @@ function App() {
   const [recoverySearch, setRecoverySearch] = useState('');
   const [editingAccount, setEditingAccount] = useState(null);
   const [newAccountPin, setNewAccountPin] = useState('');
+
+  // Navigation Helper Function
+  const navigateTo = (view, rId = '', rName = '') => {
+    let path = '/';
+    if (view === 'projector') {
+      path = `/projector/${rId || 'prediction'}`;
+    } else if (view === 'organizer') {
+      path = `/organizer/${rId || 'prediction'}`;
+    } else if (view === 'admin-hub') {
+      path = '/admin';
+    } else if (view === 'admin-login') {
+      path = '/login';
+    } else if (view === 'admin-register') {
+      path = '/register';
+    } else if (view === 'player') {
+      path = `/play/${rId || 'prediction'}`;
+    }
+
+    window.history.pushState({}, '', path);
+    setCurrentView(view);
+    if (rId) setRoomId(rId);
+    if (rName) setRoomName(rName);
+  };
+
+  // Sync back/forward navigation popstate
+  useEffect(() => {
+    const handlePopState = () => {
+      const route = parseRoute();
+      setCurrentView(route.view);
+      if (route.roomId) {
+        setRoomId(route.roomId);
+        setRoomName(route.roomId === 'auction' ? 'Python Auction' : 'Prediction Challenge');
+      } else {
+        setRoomId('');
+        setRoomName('');
+      }
+    };
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, []);
 
   // Fetch security/recovery records on modal load
   useEffect(() => {
@@ -121,31 +189,63 @@ function App() {
     const savedRoomId = localStorage.getItem('python_wc_room_id');
     const savedRoomName = localStorage.getItem('python_wc_room_name');
     const isAdmin = localStorage.getItem('python_wc_admin_mode') === 'true';
-    const savedView = localStorage.getItem('python_wc_current_view');
     const savedAdminToken = localStorage.getItem('python_wc_admin_token');
 
-    if (isAdmin && savedView) {
-      setRoomId(savedRoomId || '');
-      setRoomName(savedRoomName || '');
-      setAdminMode(true);
-      setAdminToken(savedAdminToken || '');
-      setCurrentView(savedView);
-    } else {
-      const savedUsername = localStorage.getItem('python_wc_player_username');
-      const savedPin = localStorage.getItem('python_wc_player_pin');
-      if (savedUsername && savedPin) {
-        setNickname(savedUsername);
-        setPlayerId(savedUsername);
-        setPlayerPinInput(savedPin);
+    // Parse the current path
+    const route = parseRoute();
 
-        if (savedRoomId && savedRoomName) {
-          setRoomId(savedRoomId);
-          setRoomName(savedRoomName);
-          setCurrentView('player');
-        } else {
-          setCurrentView('enter-room');
-        }
+    // Always load admin details if saved in localStorage
+    if (isAdmin) {
+      setAdminMode(true);
+      if (savedAdminToken) setAdminToken(savedAdminToken);
+    }
+
+    // Set view based on URL route
+    setCurrentView(route.view);
+
+    if (route.roomId) {
+      setRoomId(route.roomId);
+      // Retrieve stored room name if it matches
+      if (savedRoomId === route.roomId && savedRoomName) {
+        setRoomName(savedRoomName);
+      } else {
+        setRoomName(route.roomId === 'auction' ? 'Python Auction' : 'Prediction Challenge');
       }
+    } else if (route.view === 'landing' || route.view === 'admin-login' || route.view === 'admin-register' || route.view === 'admin-hub') {
+      // Keep roomId empty for general screens
+      setRoomId('');
+      setRoomName('');
+    } else {
+      // Reclaim room details if player
+      if (savedRoomId) setRoomId(savedRoomId);
+      if (savedRoomName) setRoomName(savedRoomName);
+    }
+
+    const savedUsername = localStorage.getItem('python_wc_player_username');
+    const savedPin = localStorage.getItem('python_wc_player_pin');
+    if (savedUsername && savedPin) {
+      setPlayerId(savedUsername);
+      // Auto login API call to verify
+      fetch('/api/player/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: savedUsername, pin: savedPin })
+      })
+        .then(async (res) => {
+          const data = await res.json();
+          if (res.ok && data.success) {
+            setPlayerId(data.username);
+            // If the view is currently landing (meaning the route is not /play/:id), go to enter-room
+            if (route.view === 'landing') {
+              navigateTo('enter-room');
+            }
+          } else {
+            // Clear invalid credentials
+            localStorage.removeItem('python_wc_player_username');
+            localStorage.removeItem('python_wc_player_pin');
+          }
+        })
+        .catch(err => console.error("Auto-login error:", err));
     }
   }, []);
 
@@ -164,26 +264,49 @@ function App() {
     }
   }, [adminMode, currentView, roomId, roomName, adminToken]);
 
+  // Redirect player to login if not logged in and no credentials saved
+  useEffect(() => {
+    if (currentView === 'player' && !playerId) {
+      const savedUsername = localStorage.getItem('python_wc_player_username');
+      const savedPin = localStorage.getItem('python_wc_player_pin');
+      if (!savedUsername || !savedPin) {
+        navigateTo('landing');
+      }
+    }
+  }, [currentView, playerId]);
+
   // Sync state & handle socket events for active room
   useEffect(() => {
     if (!roomId) return;
 
+    const applyRoomState = (res) => {
+      setGameState(prev => ({
+        ...prev,
+        gameState: res.gameState,
+        currentQuestionId: res.currentQuestionId,
+        activeQuestion: res.activeQuestion,
+        submissionsCount: res.submissionsCount,
+        config: res.config,
+        timerSecondsRemaining: res.timerSecondsRemaining,
+        submittedPlayerIds: res.submittedPlayerIds,
+        questions: res.questions,
+        openQuestions: res.openQuestions ?? prev.openQuestions,
+        pin: res.pin || '',
+        groups: res.groups ?? prev.groups,
+        teamsLocked: res.teamsLocked ?? prev.teamsLocked ?? false,
+        currentBid: res.currentBid ?? prev.currentBid,
+        highestBidder: res.highestBidder ?? prev.highestBidder,
+        auctionWinner: res.auctionWinner ?? prev.auctionWinner
+      }));
+      if (Array.isArray(res.standings)) {
+        setStandings(res.standings);
+      }
+    };
+
     // Connect to room channel
     socket.emit('enter-room', { roomId, role: currentView, playerId }, (res) => {
       if (res.success) {
-        setGameState(prev => ({
-          ...prev,
-          gameState: res.gameState,
-          currentQuestionId: res.currentQuestionId,
-          activeQuestion: res.activeQuestion,
-          submissionsCount: res.submissionsCount,
-          config: res.config,
-          timerSecondsRemaining: res.timerSecondsRemaining,
-          submittedPlayerIds: res.submittedPlayerIds,
-          questions: res.questions,
-          pin: res.pin || ''
-        }));
-        setStandings(res.standings);
+        applyRoomState(res);
       } else {
         console.error('Failed to enter room:', res.error);
       }
@@ -192,7 +315,13 @@ function App() {
     // Fetch initial standings via HTTP API
     fetch(`/api/standings/${roomId}`)
       .then(res => res.json())
-      .then(data => setStandings(data))
+      .then(data => {
+        if (Array.isArray(data)) {
+          setStandings(data);
+        } else {
+          console.error('Invalid standings data fetched:', data);
+        }
+      })
       .catch(err => console.error('Error fetching standings:', err));
 
   }, [roomId, currentView, playerId]);
@@ -214,9 +343,17 @@ function App() {
               timerSecondsRemaining: res.timerSecondsRemaining,
               submittedPlayerIds: res.submittedPlayerIds,
               questions: res.questions,
-              pin: res.pin || ''
+              openQuestions: res.openQuestions ?? prev.openQuestions,
+              pin: res.pin || '',
+              groups: res.groups ?? prev.groups,
+              teamsLocked: res.teamsLocked ?? prev.teamsLocked ?? false,
+              currentBid: res.currentBid ?? prev.currentBid,
+              highestBidder: res.highestBidder ?? prev.highestBidder,
+              auctionWinner: res.auctionWinner ?? prev.auctionWinner
             }));
-            setStandings(res.standings);
+            if (Array.isArray(res.standings)) {
+              setStandings(res.standings);
+            }
           }
         });
 
@@ -264,8 +401,18 @@ function App() {
       }));
     });
 
+    socket.on('teams-locked-update', ({ teamsLocked, groups }) => {
+      setGameState(prev => ({
+        ...prev,
+        teamsLocked,
+        ...(groups ? { groups } : {})
+      }));
+    });
+
     socket.on('standings-update', (data) => {
-      setStandings(data);
+      if (Array.isArray(data)) {
+        setStandings(data);
+      }
     });
 
     socket.on('submission-count-update', ({ count, total, submittedPlayerIds }) => {
@@ -296,7 +443,7 @@ function App() {
         gameState: 'REVEALED',
         lastResults: results
       }));
-      if (results.players) {
+      if (results.players && Array.isArray(results.players)) {
         setStandings(results.players);
       }
       if (results.questionStats) {
@@ -317,6 +464,10 @@ function App() {
       socket.off('reveal-suspense-start');
       socket.off('results-revealed');
       socket.off('auction-price-update');
+      socket.off('groups-update');
+      socket.off('teams-locked-update');
+      socket.off('bid-updated');
+      socket.off('item-revealed');
     };
   }, []);
 
@@ -324,8 +475,8 @@ function App() {
   const handlePlayerLogin = (e) => {
     e.preventDefault();
     setAuthError('');
-    const user = nickname.trim();
-    const pin = playerPinInput.trim();
+    const user = playerAccountUsername.trim();
+    const pin = playerAccountPin.trim();
 
     if (!user || !pin) {
       setAuthError('Please enter your username and a 4-digit PIN!');
@@ -342,7 +493,6 @@ function App() {
         if (res.ok && data.success) {
           localStorage.setItem('python_wc_player_username', data.username);
           localStorage.setItem('python_wc_player_pin', pin);
-          setNickname(data.username);
           setPlayerId(data.username);
           setAuthError('');
           setCurrentView('enter-room');
@@ -356,8 +506,8 @@ function App() {
   const handlePlayerRegister = (e) => {
     e.preventDefault();
     setAuthError('');
-    const user = nickname.trim();
-    const pin = playerPinInput.trim();
+    const user = playerAccountUsername.trim();
+    const pin = playerAccountPin.trim();
 
     if (!user || !pin) {
       setAuthError('Please enter your username and a 4-digit PIN!');
@@ -371,10 +521,6 @@ function App() {
       setAuthError('PIN must be 4 digits!');
       return;
     }
-    if (isRudeName(user)) {
-      setAuthError('Please use a polite and appropriate nickname!');
-      return;
-    }
 
     fetch('/api/player/register', {
       method: 'POST',
@@ -386,7 +532,6 @@ function App() {
         if (res.ok && data.success) {
           localStorage.setItem('python_wc_player_username', data.username);
           localStorage.setItem('python_wc_player_pin', pin);
-          setNickname(data.username);
           setPlayerId(data.username);
           setAuthError('');
           setCurrentView('enter-room');
@@ -412,19 +557,12 @@ function App() {
         if (res.ok && data.success) {
           const rId = data.roomId;
           const rName = data.roomName;
-
-          socket.emit('join-game', { roomId: rId, id: playerId, name: nickname }, (joinRes) => {
-            if (joinRes.success) {
-              setRoomId(rId);
-              setRoomName(rName);
-              localStorage.setItem('python_wc_room_id', rId);
-              localStorage.setItem('python_wc_room_name', rName);
-              setAuthError('');
-              setCurrentView('player');
-            } else {
-              setAuthError(joinRes.error || 'Failed to join playing field.');
-            }
-          });
+          setRoomId(rId);
+          setRoomName(rName);
+          localStorage.setItem('python_wc_room_id', rId);
+          localStorage.setItem('python_wc_room_name', rName);
+          setAuthError('');
+          navigateTo('player', rId, rName);
         } else {
           setAuthError(data.error || 'Invalid Game PIN');
         }
@@ -435,11 +573,12 @@ function App() {
   const handleLeaveRoom = () => {
     localStorage.removeItem('python_wc_room_id');
     localStorage.removeItem('python_wc_room_name');
+    localStorage.removeItem('python_wc_player_nickname');
     setRoomId('');
     setRoomName('');
     setPinCode('');
     setAuthError('');
-    setCurrentView('enter-room');
+    navigateTo('landing');
   };
 
   const handleSecretClick = () => {
@@ -447,7 +586,7 @@ function App() {
       const next = prev + 1;
       if (next >= 7) {
         setAuthError('');
-        setCurrentView('admin-login');
+        navigateTo('admin-login');
         return 0;
       }
       return next;
@@ -477,7 +616,7 @@ function App() {
           setAdminMode(true);
           setAdminToken(data.token);
           localStorage.setItem('python_wc_admin_token', data.token);
-          setCurrentView('admin-hub');
+          navigateTo('admin-hub');
         } else {
           setAuthError(data.error || 'Incorrect username or password PIN');
         }
@@ -508,7 +647,7 @@ function App() {
           setAdminPassword('');
           setRegKey('');
           setAuthError('Registration successful! Please login.');
-          setCurrentView('admin-login');
+          navigateTo('admin-login');
         } else {
           setAuthError(data.error || 'Registration failed.');
         }
@@ -519,7 +658,6 @@ function App() {
   const handleLogout = () => {
     localStorage.removeItem('python_wc_room_id');
     localStorage.removeItem('python_wc_room_name');
-    localStorage.removeItem('python_wc_player_name');
     localStorage.removeItem('python_wc_player_username');
     localStorage.removeItem('python_wc_player_pin');
     localStorage.removeItem('python_wc_admin_mode');
@@ -529,8 +667,10 @@ function App() {
     setRoomName('');
     setNickname('');
     setPlayerId('');
-    setPlayerPinInput('');
+    setPlayerAccountUsername('');
+    setPlayerAccountPin('');
     setAdminMode(false);
+    navigateTo('landing');
   };
 
   const renderActiveView = () => {
@@ -572,13 +712,13 @@ function App() {
               <form onSubmit={isRegisterMode ? handlePlayerRegister : handlePlayerLogin}>
                 <div style={{ textAlign: 'left', marginBottom: '15px' }}>
                   <label style={{ fontSize: '12px', color: 'rgba(255,255,255,0.6)', display: 'block', marginBottom: '6px', fontWeight: 'bold' }}>
-                    NICKNAME / USERNAME
+                    USERNAME
                   </label>
                   <input
                     type="text"
-                    placeholder="Nickname or Username"
-                    value={nickname}
-                    onChange={(e) => setNickname(e.target.value)}
+                    placeholder="Username"
+                    value={playerAccountUsername}
+                    onChange={(e) => setPlayerAccountUsername(e.target.value)}
                     maxLength={15}
                     style={{
                       width: '100%',
@@ -595,16 +735,16 @@ function App() {
 
                 <div style={{ textAlign: 'left', marginBottom: '20px' }}>
                   <label style={{ fontSize: '12px', color: 'rgba(255,255,255,0.6)', display: 'block', marginBottom: '6px', fontWeight: 'bold' }}>
-                    4-DIGIT PIN
+                    Password
                   </label>
                   <input
                     type="password"
                     pattern="[0-9]*"
                     inputMode="numeric"
                     maxLength={4}
-                    placeholder="4-digit PIN (e.g. 1234)"
-                    value={playerPinInput}
-                    onChange={(e) => setPlayerPinInput(e.target.value)}
+                    placeholder="Password (4-digit PIN)"
+                    value={playerAccountPin}
+                    onChange={(e) => setPlayerAccountPin(e.target.value)}
                     style={{
                       width: '100%',
                       padding: '14px',
@@ -802,10 +942,10 @@ function App() {
                 </button>
 
                 <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', marginTop: '10px' }}>
-                  <button type="button" style={{ background: 'none', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer' }} onClick={() => setCurrentView('landing')}>
+                  <button type="button" style={{ background: 'none', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer' }} onClick={() => navigateTo('landing')}>
                     Back to Play
                   </button>
-                  <button type="button" style={{ background: 'none', border: 'none', color: '#00e676', cursor: 'pointer', fontWeight: 'bold' }} onClick={() => { setAuthError(''); setCurrentView('admin-register'); }}>
+                  <button type="button" style={{ background: 'none', border: 'none', color: '#00e676', cursor: 'pointer', fontWeight: 'bold' }} onClick={() => { setAuthError(''); navigateTo('admin-register'); }}>
                     Register Account
                   </button>
                 </div>
@@ -904,7 +1044,7 @@ function App() {
                 </button>
 
                 <div style={{ display: 'flex', justifyContent: 'center', fontSize: '13px', marginTop: '10px' }}>
-                  <button type="button" style={{ background: 'none', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer' }} onClick={() => { setAuthError(''); setCurrentView('admin-login'); }}>
+                  <button type="button" style={{ background: 'none', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer' }} onClick={() => { setAuthError(''); navigateTo('admin-login'); }}>
                     Back to Login
                   </button>
                 </div>
@@ -976,10 +1116,8 @@ function App() {
                       className="btn-primary"
                       style={{ flex: 1, padding: '10px', fontSize: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', background: 'linear-gradient(135deg, #00e676 0%, #00b0ff 100%)', color: '#07170f' }}
                       onClick={() => {
-                        setRoomId('prediction');
-                        setRoomName('Prediction Challenge');
                         setAdminMode(true);
-                        setCurrentView('projector');
+                        navigateTo('projector', 'prediction', 'Prediction Challenge');
                       }}
                     >
                       <Play size={14} /> Open Projector (Admin)
@@ -988,10 +1126,8 @@ function App() {
                       className="btn-secondary"
                       style={{ flex: 1, padding: '10px', fontSize: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}
                       onClick={() => {
-                        setRoomId('prediction');
-                        setRoomName('Prediction Challenge');
                         setAdminMode(true);
-                        setCurrentView('organizer');
+                        navigateTo('organizer', 'prediction', 'Prediction Challenge');
                       }}
                     >
                       <Settings size={14} /> Organizer Panel
@@ -1024,47 +1160,45 @@ function App() {
                     </span>
                     <p style={{ marginTop: '10px', fontSize: '13px', color: '#a0aec0', lineHeight: '1.4' }}>
                       Final-day python auction bidding arena. Converts player tokens from predictions into bidding power.
-                  </p>
+                    </p>
+                  </div>
+
+                  <div style={{ borderTop: '1px solid rgba(255,255,255,0.05)', paddingTop: '20px', display: 'flex', gap: '10px' }}>
+                    <button
+                      className="btn-primary"
+                      style={{ flex: 1, padding: '10px', fontSize: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', background: 'linear-gradient(135deg, #f59e0b 0%, #ff5252 100%)', color: '#170c00' }}
+                      onClick={() => {
+                        setAdminMode(true);
+                        navigateTo('projector', 'auction', 'Python Auction');
+                      }}
+                    >
+                      <Play size={14} /> Open Projector (Admin)
+                    </button>
+                    <button
+                      className="btn-secondary"
+                      style={{ flex: 1, padding: '10px', fontSize: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', borderColor: 'rgba(245, 158, 11, 0.3)', color: '#f59e0b' }}
+                      onClick={() => {
+                        setAdminMode(true);
+                        navigateTo('organizer', 'auction', 'Python Auction');
+                      }}
+                    >
+                      <Settings size={14} /> Organizer Panel
+                    </button>
+                  </div>
                 </div>
 
-                <div style={{ borderTop: '1px solid rgba(255,255,255,0.05)', paddingTop: '20px', display: 'flex', gap: '10px' }}>
-                  <button
-                    className="btn-primary"
-                    style={{ flex: 1, padding: '10px', fontSize: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', background: 'linear-gradient(135deg, #f59e0b 0%, #ff5252 100%)', color: '#170c00' }}
-                    onClick={() => {
-                      setRoomId('auction');
-                      setRoomName('Python Auction');
-                      setAdminMode(true);
-                      setCurrentView('projector');
-                    }}
-                  >
-                    <Play size={14} /> Open Projector (Admin)
-                  </button>
-                  <button
-                    className="btn-secondary"
-                    style={{ flex: 1, padding: '10px', fontSize: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', borderColor: 'rgba(245, 158, 11, 0.3)', color: '#f59e0b' }}
-                    onClick={() => {
-                      setRoomId('auction');
-                      setRoomName('Python Auction');
-                      setAdminMode(true);
-                      setCurrentView('organizer');
-                    }}
-                  >
-                    <Settings size={14} /> Organizer Panel
-                  </button>
-                </div>
               </div>
 
             </div>
-
           </div>
-        </div>
-      );
-    case 'player':
+        );
+      case 'player':
         return (
           <PlayerView
             socket={socket}
             playerId={playerId}
+            nickname={nickname}
+            setNickname={setNickname}
             gameState={gameState}
             standings={standings}
             roomId={roomId}
@@ -1082,7 +1216,7 @@ function App() {
             roomName={roomName}
             adminMode={adminMode}
             adminToken={adminToken}
-            onBackToHub={() => setCurrentView('admin-hub')}
+            onBackToHub={() => navigateTo('admin-hub')}
           />
         );
       case 'organizer':
@@ -1094,7 +1228,7 @@ function App() {
             roomId={roomId}
             roomName={roomName}
             adminToken={adminToken}
-            onBackToHub={() => setCurrentView('admin-hub')}
+            onBackToHub={() => navigateTo('admin-hub')}
           />
         );
       default:
@@ -1144,7 +1278,7 @@ function App() {
                       return (
                         <div key={acc.username} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 15px', background: 'rgba(255,255,255,0.03)', border: '1px solid var(--glass-border)', borderRadius: '8px' }}>
                           <span style={{ fontWeight: 'bold', fontSize: '14px' }}>{acc.username}</span>
-                          
+
                           <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                             {isEditing ? (
                               <>

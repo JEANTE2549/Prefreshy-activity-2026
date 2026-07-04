@@ -1,20 +1,21 @@
 import React, { useState, useEffect } from 'react';
 import { Play, Square, Award, Settings, RefreshCw, Trash2, Plus, Download, AlertTriangle, HelpCircle, Coins, Users, PlusCircle, MinusCircle, UserMinus, ArrowLeft, Image, Unlock, Edit, Lock } from 'lucide-react';
 
-function OrganizerView({ socket, gameState, standings, roomId, roomName, adminToken, onBackToHub }) {
+function OrganizerView({ socket, gameState, standings: rawStandings, roomId, roomName, adminToken, onBackToHub }) {
+  const standings = Array.isArray(rawStandings) ? rawStandings : [];
   // Modal & Dialog States
   const [showLaunchConfirm, setShowLaunchConfirm] = useState(null); // question object
   const [showResetConfirm, setShowResetConfirm] = useState(false);
   const [showAddQuestion, setShowAddQuestion] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [editingQuestionId, setEditingQuestionId] = useState(null);
-  
+
   // Security & Recovery modal state has been moved globally to App.jsx.
 
   // Auction specific states
   const [showAddAuctionQuestion, setShowAddAuctionQuestion] = useState(false);
   const [showAddOpenQuestion, setShowAddOpenQuestion] = useState(false);
-  
+
   // Form states for Auction Question
   const [aqText, setAqText] = useState('');
   const [aqDiff, setAqDiff] = useState('MEDIUM');
@@ -37,7 +38,7 @@ function OrganizerView({ socket, gameState, standings, roomId, roomName, adminTo
   // Forms
   const [newQuestionText, setNewQuestionText] = useState('');
   const [newQuestionDifficulty, setNewQuestionDifficulty] = useState('MEDIUM');
-  
+
   // Custom Media Upload & Alignment
   const [newQuestionImage, setNewQuestionImage] = useState(null); // base64 data url
   const [newQuestionImageName, setNewQuestionImageName] = useState('');
@@ -245,7 +246,7 @@ function OrganizerView({ socket, gameState, standings, roomId, roomName, adminTo
       alert("Please enter valid Yes and No counts.");
       return;
     }
-    
+
     socket.emit('admin-emergency-offline', { roomId, adminToken, yesCount: yes, noCount: no }, (res) => {
       if (res.success) {
         setShowOfflineInput(false);
@@ -437,15 +438,17 @@ function OrganizerView({ socket, gameState, standings, roomId, roomName, adminTo
         "B": { id: "B", name: "Team B", playerIds: [], tokens: 100, itemsWon: [] },
         "C": { id: "C", name: "Team C", playerIds: [], tokens: 100, itemsWon: [] }
       };
+      const teamsLocked = gameState.teamsLocked || false;
 
       const activePlayers = [...standings];
       const unassignedPlayers = activePlayers.filter(p => {
         return !groups.A.playerIds.includes(p.id) &&
-               !groups.B.playerIds.includes(p.id) &&
-               !groups.C.playerIds.includes(p.id);
+          !groups.B.playerIds.includes(p.id) &&
+          !groups.C.playerIds.includes(p.id);
       });
 
       const handleMove = (pId, gId) => {
+        if (teamsLocked) return;
         const updated = JSON.parse(JSON.stringify(groups));
         Object.values(updated).forEach(g => {
           g.playerIds = g.playerIds.filter(id => id !== pId);
@@ -453,26 +456,72 @@ function OrganizerView({ socket, gameState, standings, roomId, roomName, adminTo
         if (gId) {
           updated[gId].playerIds.push(pId);
         }
-        socket.emit('admin-save-groups', { roomId, adminToken, groups: updated });
+        socket.emit('admin-save-groups', { roomId, adminToken, groups: updated }, (res) => {
+          if (res && !res.success) alert(res.error || 'Failed to save team changes.');
+        });
       };
 
       const handleAutofill = () => {
-        socket.emit('admin-autofill-groups', { roomId, adminToken });
+        if (teamsLocked) return;
+        socket.emit('admin-autofill-groups', { roomId, adminToken }, (res) => {
+          if (res && !res.success) alert(res.error || 'Failed to auto-fill teams.');
+        });
+      };
+
+      const handleLockTeams = () => {
+        const totalAssigned = Object.values(groups).reduce((sum, g) => sum + g.playerIds.length, 0);
+        if (totalAssigned === 0) {
+          alert('Assign at least one player to a team before locking.');
+          return;
+        }
+        socket.emit('admin-lock-teams', { roomId, adminToken }, (res) => {
+          if (res && !res.success) alert(res.error || 'Failed to lock teams.');
+        });
+      };
+
+      const handleUnlockTeams = () => {
+        socket.emit('admin-unlock-teams', { roomId, adminToken }, (res) => {
+          if (res && !res.success) alert(res.error || 'Failed to unlock teams.');
+        });
       };
 
       return (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '20px', marginTop: '10px' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <h3 style={{ fontSize: '15px', fontWeight: 'bold', color: '#f59e0b' }}>👥 Group Organizer & Balanced Auto-Fill</h3>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+              <h3 style={{ fontSize: '15px', fontWeight: 'bold', color: '#f59e0b', margin: 0 }}>👥 Group Organizer & Balanced Auto-Fill</h3>
+              {teamsLocked && (
+                <span style={{ fontSize: '11px', background: 'rgba(255, 179, 0, 0.15)', color: '#ffb300', padding: '4px 10px', borderRadius: '20px', fontWeight: 'bold', border: '1px solid rgba(255, 179, 0, 0.3)', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                  <Lock size={11} /> TEAMS LOCKED
+                </span>
+              )}
+            </div>
             <div style={{ display: 'flex', gap: '10px' }}>
-              <button type="button" className="btn-secondary" style={{ padding: '6px 12px', fontSize: '12px' }} onClick={handleAutofill}>
-                Auto-Fill Balanced Teams
-              </button>
+              {teamsLocked ? (
+                <button type="button" className="btn-secondary" style={{ padding: '6px 12px', fontSize: '12px', display: 'inline-flex', alignItems: 'center', gap: '4px', borderColor: 'var(--pitch-accent-glow)', color: 'var(--pitch-accent)' }} onClick={handleUnlockTeams}>
+                  <Unlock size={12} /> Unlock Teams
+                </button>
+              ) : (
+                <>
+                  <button type="button" className="btn-secondary" style={{ padding: '6px 12px', fontSize: '12px' }} onClick={handleAutofill}>
+                    Auto-Fill Balanced Teams
+                  </button>
+                  <button type="button" className="btn-primary" style={{ padding: '6px 12px', fontSize: '12px', background: 'linear-gradient(135deg, #00e676 0%, #00b0ff 100%)', color: 'black', display: 'inline-flex', alignItems: 'center', gap: '4px' }} onClick={handleLockTeams}>
+                    <Lock size={12} /> Lock Teams
+                  </button>
+                </>
+              )}
               <button type="button" className="btn-primary" style={{ padding: '6px 12px', fontSize: '12px', background: 'linear-gradient(135deg, #ffd700 0%, #f59e0b 100%)', color: 'black' }} onClick={() => socket.emit('admin-end-auction-game', { roomId, adminToken })}>
                 End Game (Podium View) 🏆
               </button>
             </div>
           </div>
+
+          {teamsLocked && (
+            <div style={{ fontSize: '12px', color: 'var(--text-secondary)', background: 'rgba(255, 179, 0, 0.05)', border: '1px solid rgba(255, 179, 0, 0.15)', padding: '10px 12px', borderRadius: '8px' }}>
+              Team assignments are saved and locked. They will persist after a page refresh. Unlock teams to edit assignments or run auto-fill again.
+            </div>
+          )}
 
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '15px' }}>
             {Object.values(groups).map(g => (
@@ -481,7 +530,7 @@ function OrganizerView({ socket, gameState, standings, roomId, roomName, adminTo
                   <strong style={{ color: 'var(--pitch-accent)', fontSize: '14px' }}>{g.name}</strong>
                   <span className="gold-token" style={{ fontSize: '13px' }}>{g.tokens} 🪙</span>
                 </div>
-                
+
                 {g.itemsWon && g.itemsWon.length > 0 && (
                   <div style={{ fontSize: '11px', color: 'var(--text-secondary)', marginBottom: '10px', display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
                     <span>Boxes won:</span>
@@ -496,13 +545,39 @@ function OrganizerView({ socket, gameState, standings, roomId, roomName, adminTo
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', minHeight: '80px' }}>
                   {g.playerIds.map(pId => {
                     const profile = activePlayers.find(p => p.id === pId);
+                    const isCaptain = g.bidderId === pId;
                     return (
-                      <div key={pId} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '6px 8px', background: 'rgba(0,0,0,0.2)', borderRadius: '6px', fontSize: '12px' }}>
-                        <span>{profile?.name || pId}</span>
-                        <select 
-                          value={g.id} 
-                          onChange={(e) => handleMove(pId, e.target.value)} 
-                          style={{ background: 'rgba(0,0,0,0.5)', color: '#fff', border: '1px solid var(--glass-border)', borderRadius: '4px', fontSize: '11px', padding: '2px 4px' }}
+                      <div key={pId} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '6px 8px', background: isCaptain ? 'rgba(255, 179, 0, 0.08)' : 'rgba(0,0,0,0.2)', borderRadius: '6px', fontSize: '12px', border: isCaptain ? '1px solid rgba(255, 179, 0, 0.2)' : '1px solid transparent' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                          <button
+                            type="button"
+                            title={isCaptain ? 'Team Bidder (Captain)' : `Promote ${profile?.name || pId} to Team Bidder`}
+                            disabled={teamsLocked}
+                            onClick={() => {
+                              if (!isCaptain && !teamsLocked) {
+                                socket.emit('admin-set-team-bidder', { roomId, adminToken, teamId: g.id, bidderId: pId });
+                              }
+                            }}
+                            style={{
+                              background: 'none',
+                              border: 'none',
+                              padding: '0',
+                              cursor: teamsLocked ? 'not-allowed' : (isCaptain ? 'default' : 'pointer'),
+                              fontSize: '14px',
+                              filter: isCaptain ? 'none' : 'grayscale(1) opacity(0.4)',
+                              transition: 'filter 0.2s ease',
+                              opacity: teamsLocked ? 0.5 : 1
+                            }}
+                          >
+                            👑
+                          </button>
+                          <span style={{ fontWeight: isCaptain ? 'bold' : 'normal', color: isCaptain ? '#ffb300' : '#fff' }}>{profile?.name || pId}</span>
+                        </div>
+                        <select
+                          value={g.id}
+                          onChange={(e) => handleMove(pId, e.target.value)}
+                          disabled={teamsLocked}
+                          style={{ background: 'rgba(0,0,0,0.5)', color: '#fff', border: '1px solid var(--glass-border)', borderRadius: '4px', fontSize: '11px', padding: '2px 4px', opacity: teamsLocked ? 0.5 : 1, cursor: teamsLocked ? 'not-allowed' : 'pointer' }}
                         >
                           <option value="A">Team A</option>
                           <option value="B">Team B</option>
@@ -530,9 +605,9 @@ function OrganizerView({ socket, gameState, standings, roomId, roomName, adminTo
                   <div key={p.id} style={{ display: 'flex', alignItems: 'center', gap: '6px', background: 'rgba(0,0,0,0.3)', padding: '5px 10px', borderRadius: '6px', fontSize: '12px' }}>
                     <span>{p.name}</span>
                     <div style={{ display: 'flex', gap: '3px' }}>
-                      <button type="button" style={{ background: 'rgba(255,255,255,0.05)', color: '#fff', border: '1px solid var(--glass-border)', padding: '2px 6px', borderRadius: '4px', cursor: 'pointer', fontSize: '10px' }} onClick={() => handleMove(p.id, 'A')}>+A</button>
-                      <button type="button" style={{ background: 'rgba(255,255,255,0.05)', color: '#fff', border: '1px solid var(--glass-border)', padding: '2px 6px', borderRadius: '4px', cursor: 'pointer', fontSize: '10px' }} onClick={() => handleMove(p.id, 'B')}>+B</button>
-                      <button type="button" style={{ background: 'rgba(255,255,255,0.05)', color: '#fff', border: '1px solid var(--glass-border)', padding: '2px 6px', borderRadius: '4px', cursor: 'pointer', fontSize: '10px' }} onClick={() => handleMove(p.id, 'C')}>+C</button>
+                      <button type="button" disabled={teamsLocked} style={{ background: 'rgba(255,255,255,0.05)', color: '#fff', border: '1px solid var(--glass-border)', padding: '2px 6px', borderRadius: '4px', cursor: teamsLocked ? 'not-allowed' : 'pointer', fontSize: '10px', opacity: teamsLocked ? 0.5 : 1 }} onClick={() => handleMove(p.id, 'A')}>+A</button>
+                      <button type="button" disabled={teamsLocked} style={{ background: 'rgba(255,255,255,0.05)', color: '#fff', border: '1px solid var(--glass-border)', padding: '2px 6px', borderRadius: '4px', cursor: teamsLocked ? 'not-allowed' : 'pointer', fontSize: '10px', opacity: teamsLocked ? 0.5 : 1 }} onClick={() => handleMove(p.id, 'B')}>+B</button>
+                      <button type="button" disabled={teamsLocked} style={{ background: 'rgba(255,255,255,0.05)', color: '#fff', border: '1px solid var(--glass-border)', padding: '2px 6px', borderRadius: '4px', cursor: teamsLocked ? 'not-allowed' : 'pointer', fontSize: '10px', opacity: teamsLocked ? 0.5 : 1 }} onClick={() => handleMove(p.id, 'C')}>+C</button>
                     </div>
                   </div>
                 ))}
@@ -642,7 +717,7 @@ function OrganizerView({ socket, gameState, standings, roomId, roomName, adminTo
             {Object.values(groups).map(g => (
               <div key={g.id} style={{ background: 'rgba(0,0,0,0.2)', padding: '12px', borderRadius: '8px', border: '1px solid var(--glass-border)' }}>
                 <strong style={{ fontSize: '13px', display: 'block', color: '#fff', marginBottom: '8px' }}>{g.name} ({g.tokens} 🪙)</strong>
-                
+
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
                   {(g.itemsWon || []).map((itm, idx) => {
                     const isOpened = itm.startsWith('OPENED:');
@@ -682,7 +757,7 @@ function OrganizerView({ socket, gameState, standings, roomId, roomName, adminTo
 
     return (
       <div className="app-container" style={{ maxWidth: '1200px', padding: '20px' }}>
-        
+
         {/* Header HUD */}
         <header className="glass-panel" style={{ padding: '15px 25px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '25px', borderTop: '3px solid #f59e0b' }}>
           <div style={{ display: 'flex', gap: '15px', alignItems: 'center' }}>
@@ -725,10 +800,10 @@ function OrganizerView({ socket, gameState, standings, roomId, roomName, adminTo
           renderEndgamePodiumSteward()
         ) : (
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 350px', gap: '25px' }}>
-            
+
             {/* Left panel: round control & question lists */}
             <div style={{ display: 'flex', flexDirection: 'column', gap: '25px' }}>
-              
+
               {/* Active Control Panel */}
               <div className="glass-panel" style={{ padding: '25px', border: '1px solid rgba(245, 158, 11, 0.2)' }}>
                 <h2 style={{ fontSize: '16px', fontWeight: '800', marginBottom: '15px', color: '#f59e0b', textTransform: 'uppercase' }}>
@@ -768,7 +843,7 @@ function OrganizerView({ socket, gameState, standings, roomId, roomName, adminTo
               {/* Auction Question list */}
               <div className="glass-panel" style={{ padding: '25px' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px', borderBottom: '1px solid var(--glass-border)', paddingBottom: '10px' }}>
-                  <h3 style={{ fontSize: '16px', fontWeight: '800' }}>🔨传统/CONTAINER AUCTION ROSTER</h3>
+                  <h3 style={{ fontSize: '16px', fontWeight: '800' }}>🔨CONTAINER AUCTION ROSTER</h3>
                   <button type="button" className="btn-secondary" style={{ padding: '6px 12px', fontSize: '11px', display: 'flex', alignItems: 'center', gap: '4px' }} onClick={() => { setEditingAqId(null); setAqText(''); setAqCorrect(''); setAqImg(null); setAqImgName(''); setAqItems([]); setShowAddAuctionQuestion(true); }}>
                     <Plus size={12} /> Add Custom Container
                   </button>
@@ -869,7 +944,7 @@ function OrganizerView({ socket, gameState, standings, roomId, roomName, adminTo
                         </div>
                         <strong style={{ fontSize: '13px', display: 'block', color: '#fff' }}>{q.text}</strong>
                         <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
-                          Options: {q.options.map((opt, i) => `${String.fromCharCode(65+i)}: ${opt}`).join(', ')} | Correct: {q.correctAnswer}
+                          Options: {q.options.map((opt, i) => `${String.fromCharCode(65 + i)}: ${opt}`).join(', ')} | Correct: {q.correctAnswer}
                         </span>
                       </div>
 
@@ -946,7 +1021,7 @@ function OrganizerView({ socket, gameState, standings, roomId, roomName, adminTo
                   <label style={{ fontSize: '12px', display: 'block', marginBottom: '4px' }}>Question Text</label>
                   <textarea className="text-input" style={{ minHeight: '80px', padding: '10px' }} value={aqText} onChange={(e) => setAqText(e.target.value)} required />
                 </div>
-                
+
                 <div>
                   <label style={{ fontSize: '12px', display: 'block', marginBottom: '4px' }}>Difficulty</label>
                   <select className="text-input" style={{ padding: '10px', background: 'var(--input-bg)', color: 'white' }} value={aqDiff} onChange={(e) => setAqDiff(e.target.value)}>
@@ -1079,7 +1154,7 @@ function OrganizerView({ socket, gameState, standings, roomId, roomName, adminTo
 
   return (
     <div className="app-container" style={{ maxWidth: '1400px' }}>
-      
+
       {/* Header Info */}
       <header className="glass-panel" style={{ padding: '20px', display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'center', gap: '20px', marginBottom: '20px', borderTop: '3px solid var(--pitch-accent)' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '15px' }}>
@@ -1133,10 +1208,10 @@ function OrganizerView({ socket, gameState, standings, roomId, roomName, adminTo
 
       {/* Main Grid */}
       <div className="responsive-grid-2-col" style={{ flex: 1 }}>
-        
+
         {/* Left Side: Game Controller & Question Bank */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-          
+
           {/* Game Controller Panel */}
           <section className="glass-panel" style={{ padding: '20px' }}>
             <h2 style={{ fontSize: '18px', fontWeight: '800', marginBottom: '15px', borderBottom: '1px solid var(--glass-border)', paddingBottom: '10px' }}>
@@ -1193,7 +1268,7 @@ function OrganizerView({ socket, gameState, standings, roomId, roomName, adminTo
                       Next Match (Lobby)
                     </button>
                   )}
-                  
+
                   <button className="btn-secondary" onClick={() => setShowOfflineInput(!showOfflineInput)}>
                     ⚠️ Manual Input (Offline Backup)
                   </button>
@@ -1236,7 +1311,7 @@ function OrganizerView({ socket, gameState, standings, roomId, roomName, adminTo
                     <button className="btn-secondary" onClick={resetQuestion} style={{ padding: '6px 12px', fontSize: '12px' }}>
                       Reset Predictions
                     </button>
-                    <button className="btn-danger" onClick={() => { if(confirm("Are you sure you want to cancel the round?")) { socket.emit('admin-cancel-round', { roomId }); } }} style={{ padding: '6px 12px', fontSize: '12px' }}>
+                    <button className="btn-danger" onClick={() => { if (confirm("Are you sure you want to cancel the round?")) { socket.emit('admin-cancel-round', { roomId }); } }} style={{ padding: '6px 12px', fontSize: '12px' }}>
                       Cancel Round & Refund
                     </button>
                   </div>
@@ -1265,11 +1340,11 @@ function OrganizerView({ socket, gameState, standings, roomId, roomName, adminTo
                 if (q.difficulty === 'PRE-MATCH') diffColor = '#00b0ff';
 
                 return (
-                  <div 
-                    key={q.id} 
+                  <div
+                    key={q.id}
                     className="question-item"
-                    style={{ 
-                      background: isSelected ? 'rgba(0, 230, 118, 0.08)' : 'rgba(0,0,0,0.15)', 
+                    style={{
+                      background: isSelected ? 'rgba(0, 230, 118, 0.08)' : 'rgba(0,0,0,0.15)',
                       border: isSelected ? '1px solid var(--pitch-accent)' : '1px solid var(--glass-border)'
                     }}
                   >
@@ -1293,7 +1368,7 @@ function OrganizerView({ socket, gameState, standings, roomId, roomName, adminTo
                           <Unlock size={11} /> Unlock
                         </button>
                       )}
-                      
+
                       <button
                         className="btn-primary"
                         onClick={() => handleLaunchQuestion(q)}
@@ -1319,7 +1394,7 @@ function OrganizerView({ socket, gameState, standings, roomId, roomName, adminTo
                       >
                         <Edit size={16} />
                       </button>
-                      
+
                       <button
                         onClick={() => deleteQuestion(q.id)}
                         disabled={isSelected}
@@ -1350,16 +1425,16 @@ function OrganizerView({ socket, gameState, standings, roomId, roomName, adminTo
               const hasPredicted = gameState.submittedPlayerIds && gameState.submittedPlayerIds.includes(p.id);
 
               return (
-                <div 
-                  key={p.id} 
-                  style={{ 
-                    padding: '10px 12px', 
-                    background: 'rgba(0,0,0,0.15)', 
-                    border: `1px solid ${hasPredicted ? 'var(--pitch-accent)' : 'var(--glass-border)'}`, 
-                    borderRadius: '8px', 
-                    display: 'flex', 
-                    flexDirection: 'column', 
-                    gap: '6px' 
+                <div
+                  key={p.id}
+                  style={{
+                    padding: '10px 12px',
+                    background: 'rgba(0,0,0,0.15)',
+                    border: `1px solid ${hasPredicted ? 'var(--pitch-accent)' : 'var(--glass-border)'}`,
+                    borderRadius: '8px',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '6px'
                   }}
                 >
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -1378,7 +1453,7 @@ function OrganizerView({ socket, gameState, standings, roomId, roomName, adminTo
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '11px', color: 'var(--text-secondary)' }}>
                     <span>Acc: {accuracy}% ({p.goals}/{p.matchesPlayed})</span>
                     <span>GG: {p.goldenGoalAvailable ? 'Avail' : 'Used'}</span>
-                    
+
                     <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
                       <button style={{ background: 'none', border: 'none', color: 'var(--pitch-accent)', cursor: 'pointer' }} onClick={() => adjustTokens(p.id, 10)} title="Add 10 tokens">
                         <PlusCircle size={14} />
@@ -1450,27 +1525,27 @@ function OrganizerView({ socket, gameState, standings, roomId, roomName, adminTo
             <h3 style={{ fontSize: '18px', fontWeight: '800', marginBottom: '15px', borderBottom: '1px solid var(--glass-border)', paddingBottom: '10px', display: 'flex', alignItems: 'center', gap: '8px' }}>
               <PlusCircle size={20} style={{ color: 'var(--pitch-accent)' }} /> {editingQuestionId ? 'Edit Question Details' : 'Add Question to Bank'}
             </h3>
-            
+
             <form onSubmit={addQuestion}>
               <div style={{ marginBottom: '15px' }}>
                 <label style={{ fontSize: '12px', color: 'var(--text-secondary)', display: 'block', marginBottom: '6px', fontWeight: 'bold' }}>Question Text</label>
-                <input 
-                  type="text" 
-                  className="text-input" 
-                  placeholder="e.g. Do you prefer debug than write docs?" 
+                <input
+                  type="text"
+                  className="text-input"
+                  placeholder="e.g. Do you prefer debug than write docs?"
                   value={newQuestionText}
                   onChange={(e) => setNewQuestionText(e.target.value)}
-                  required 
+                  required
                 />
               </div>
 
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '15px', marginBottom: '15px' }}>
                 <div>
                   <label style={{ fontSize: '12px', color: 'var(--text-secondary)', display: 'block', marginBottom: '6px', fontWeight: 'bold' }}>Difficulty Classification</label>
-                  <select 
+                  <select
                     className="text-input"
                     style={{ background: 'var(--input-bg)', color: 'white', border: '1px solid var(--glass-border)' }}
-                    value={newQuestionDifficulty} 
+                    value={newQuestionDifficulty}
                     onChange={(e) => setNewQuestionDifficulty(e.target.value)}
                   >
                     <option value="PRE-MATCH">🔵 PRE-MATCH (TRIAL)</option>
@@ -1504,20 +1579,20 @@ function OrganizerView({ socket, gameState, standings, roomId, roomName, adminTo
                 <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                   <label className="btn-secondary" style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', margin: 0, padding: '10px 15px' }}>
                     <Image size={16} /> Choose File
-                    <input 
-                      type="file" 
-                      accept="image/*" 
-                      onChange={handleImageFileChange} 
-                      style={{ display: 'none' }} 
+                    <input
+                      type="file"
+                      accept="image/*"
+                      onChange={handleImageFileChange}
+                      style={{ display: 'none' }}
                     />
                   </label>
                   <span style={{ fontSize: '13px', color: 'var(--text-secondary)', textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap' }}>
                     {newQuestionImageName || "No file chosen"}
                   </span>
                   {newQuestionImage && (
-                    <button 
-                      type="button" 
-                      onClick={() => { setNewQuestionImage(null); setNewQuestionImageName(''); }} 
+                    <button
+                      type="button"
+                      onClick={() => { setNewQuestionImage(null); setNewQuestionImageName(''); }}
                       style={{ background: 'none', border: 'none', color: 'var(--red-card)', cursor: 'pointer', fontSize: '11px', fontWeight: 'bold' }}
                     >
                       Clear
@@ -1531,7 +1606,7 @@ function OrganizerView({ socket, gameState, standings, roomId, roomName, adminTo
                 <span style={{ fontSize: '11px', color: 'var(--pitch-accent)', fontWeight: 'bold', display: 'block', marginBottom: '8px' }}>
                   📺 LIVE LAYOUT CHECKER (PREVIEW)
                 </span>
-                
+
                 <div style={{
                   display: 'flex',
                   flexDirection: newQuestionImage ? (newQuestionAlign === 'BOTTOM' ? 'column' : newQuestionAlign === 'LEFT' ? 'row-reverse' : newQuestionAlign === 'RIGHT' ? 'row' : 'column-reverse') : 'column',
@@ -1546,10 +1621,10 @@ function OrganizerView({ socket, gameState, standings, roomId, roomName, adminTo
                 }}>
                   {newQuestionImage && (
                     <div style={{ flex: '1 1 100px', display: 'flex', justifyContent: 'center' }}>
-                      <img 
-                        src={newQuestionImage} 
-                        alt="Preview Thumbnail" 
-                        style={{ maxWidth: '100px', maxHeight: '100px', borderRadius: '6px', border: '1px solid var(--glass-border)', objectFit: 'contain' }} 
+                      <img
+                        src={newQuestionImage}
+                        alt="Preview Thumbnail"
+                        style={{ maxWidth: '100px', maxHeight: '100px', borderRadius: '6px', border: '1px solid var(--glass-border)', objectFit: 'contain' }}
                       />
                     </div>
                   )}
@@ -1586,13 +1661,13 @@ function OrganizerView({ socket, gameState, standings, roomId, roomName, adminTo
             <h3 style={{ fontSize: '18px', fontWeight: '800', marginBottom: '15px', borderBottom: '1px solid var(--glass-border)', paddingBottom: '10px' }}>
               🔧 Rules & Token Economy Config
             </h3>
-            
+
             <div style={{ display: 'flex', flexDirection: 'column', gap: '15px', marginBottom: '25px' }}>
               <div>
                 <label style={{ fontSize: '12px', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px' }}>Starting Balance (Tokens)</label>
                 <input type="number" className="text-input" style={{ padding: '10px' }} value={startingTokens} onChange={(e) => setStartingTokens(e.target.value)} />
               </div>
-              
+
               <div>
                 <label style={{ fontSize: '12px', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px' }}>Participation Reward (Tokens per round)</label>
                 <input type="number" className="text-input" style={{ padding: '10px' }} value={participationReward} onChange={(e) => setParticipationReward(e.target.value)} />

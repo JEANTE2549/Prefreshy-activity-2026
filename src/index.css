@@ -34,6 +34,10 @@
   -webkit-tap-highlight-color: transparent;
 }
 
+html {
+  overflow-y: scroll;
+}
+
 body {
   background-color: var(--pitch-green-dark);
   background-image:
