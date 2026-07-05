@@ -60,9 +60,9 @@ function ProjectorView({ socket, gameState, standings: rawStandings, roomId, roo
     const isAnswering = gameState.gameState === 'AUCTION_ANSWERING' || gameState.gameState === 'AUCTION_ANSWERED';
     
     const groupsList = Object.values(gameState.groups || {
-      "A": { id: "A", name: "Team A", playerIds: [], tokens: 100, itemsWon: [] },
-      "B": { id: "B", name: "Team B", playerIds: [], tokens: 100, itemsWon: [] },
-      "C": { id: "C", name: "Team C", playerIds: [], tokens: 100, itemsWon: [] }
+      "A": { id: "A", name: "Team A", playerIds: [], tokens: 0, itemsWon: [] },
+      "B": { id: "B", name: "Team B", playerIds: [], tokens: 0, itemsWon: [] },
+      "C": { id: "C", name: "Team C", playerIds: [], tokens: 0, itemsWon: [] }
     });
     const sortedGroups = [...groupsList].sort((a, b) => b.tokens - a.tokens);
 
@@ -338,10 +338,10 @@ function ProjectorView({ socket, gameState, standings: rawStandings, roomId, roo
                       {/* MCQ Recovery List */}
                       <div className="glass-panel" style={{ padding: '15px', background: 'rgba(0,0,0,0.2)', flex: 1 }}>
                         <h3 style={{ fontSize: '15px', fontWeight: '900', color: '#00b0ff', marginBottom: '10px' }}>
-                          📢 RECOVERY MCQ ({gameState.mcqQuestions ? gameState.mcqQuestions.length : 0})
+                          📢 RECOVERY MCQ ({gameState.openQuestions ? gameState.openQuestions.length : 0})
                         </h3>
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', maxHeight: '150px', overflowY: 'auto' }}>
-                          {(gameState.mcqQuestions || []).map((q, idx) => (
+                          {(gameState.openQuestions || []).map((q, idx) => (
                             <div key={q.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'rgba(0,0,0,0.4)', padding: '8px 10px', borderRadius: '6px', border: '1px solid var(--glass-border)' }}>
                               <span style={{ fontSize: '11px', color: '#fff', textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap', maxWidth: '180px' }} title={q.text}>
                                 {idx + 1}. {q.text}
@@ -364,7 +364,7 @@ function ProjectorView({ socket, gameState, standings: rawStandings, roomId, roo
                                 <button
                                   type="button"
                                   className="btn-primary"
-                                  onClick={() => socket.emit('admin-start-open-question', { roomId, adminToken, questionId: q.id })}
+                                  onClick={() => socket.emit('admin-launch-open-question', { roomId, adminToken, questionId: q.id })}
                                   style={{ padding: '4px 10px', fontSize: '10px', background: '#00b0ff', color: 'black', border: 'none' }}
                                 >
                                   Launch 📢
@@ -372,7 +372,7 @@ function ProjectorView({ socket, gameState, standings: rawStandings, roomId, roo
                               )}
                             </div>
                           ))}
-                          {(!gameState.mcqQuestions || gameState.mcqQuestions.length === 0) && (
+                          {(!gameState.openQuestions || gameState.openQuestions.length === 0) && (
                             <span style={{ fontSize: '11px', color: 'var(--text-muted)', textAlign: 'center', padding: '15px 0' }}>No recovery MCQs</span>
                           )}
                         </div>

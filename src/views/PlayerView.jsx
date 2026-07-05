@@ -12,6 +12,41 @@ function isRudeName(name) {
   return RUDE_WORDS.some(word => normalized.includes(word));
 }
 
+function renderQuestionCard(q) {
+  if (!q) return null;
+
+  const imgEl = q.imageUrl ? (
+    <div style={{ flex: '1 1 200px', display: 'flex', justifyContent: 'center', alignItems: 'center', margin: '10px 0' }}>
+      <img
+        src={q.imageUrl}
+        alt="Question media"
+        style={{ maxWidth: '100%', maxHeight: '200px', borderRadius: '12px', border: '2px solid var(--glass-border)', objectFit: 'contain' }}
+      />
+    </div>
+  ) : null;
+
+  const textEl = (
+    <div style={{ flex: '2 1 250px', display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
+      <h3 style={{ fontSize: '18px', fontWeight: '700', lineHeight: '1.4', margin: '0 0 15px 0' }}>{q.text}</h3>
+    </div>
+  );
+
+  let flexDirection = 'column';
+  if (q.imageUrl) {
+    if (q.imageAlign === 'BOTTOM') flexDirection = 'column';
+    else if (q.imageAlign === 'LEFT') flexDirection = 'row-reverse';
+    else if (q.imageAlign === 'RIGHT') flexDirection = 'row';
+    else flexDirection = 'column-reverse'; // TOP
+  }
+
+  return (
+    <div style={{ display: 'flex', flexDirection: flexDirection, flexWrap: 'wrap', alignItems: 'center', justifyContent: 'center', gap: '15px', marginBottom: '20px' }}>
+      {imgEl}
+      {textEl}
+    </div>
+  );
+}
+
 function PlayerView({ socket, playerId, nickname, setNickname, gameState, standings, roomId, roomName, onLeaveRoom }) {
   const [joined, setJoined] = useState(() => {
     return !!localStorage.getItem('python_wc_player_nickname');
@@ -49,6 +84,18 @@ function PlayerView({ socket, playerId, nickname, setNickname, gameState, standi
   // Find player profile in standings
   const activeProfile = Array.isArray(standings) ? standings.find(p => p.id === playerId) : null;
 
+  // Calculate statistics (declared at top of component to avoid TDZ issues)
+  const matches = activeProfile?.matchesPlayed || 0;
+  const goals = activeProfile?.goals || 0;
+  const misses = activeProfile?.misses || 0;
+  const accuracy = matches > 0 ? Math.round((goals / matches) * 100) : 0;
+  const streak = activeProfile?.currentStreak || 0;
+  const bestStreak = activeProfile?.bestStreak || 0;
+  const tokens = activeProfile?.fanTokens || 100;
+  const rank = activeProfile?.currentRank || '-';
+
+
+
   // Auto-join if nickname is already cached in localStorage
   useEffect(() => {
     const savedNickname = localStorage.getItem('python_wc_player_nickname');
@@ -70,7 +117,7 @@ function PlayerView({ socket, playerId, nickname, setNickname, gameState, standi
     }
   }, [gameState.currentQuestionId]);
 
-  const handleJoin = (nameToJoin) => {
+  function handleJoin(nameToJoin) {
     if (!nameToJoin.trim()) return;
     
     // Client-side Rude Word Validation (Guardian System)
@@ -80,7 +127,8 @@ function PlayerView({ socket, playerId, nickname, setNickname, gameState, standi
     }
 
     setSubmitting(true);
-    socket.emit('join-game', { roomId, id: playerId, name: nameToJoin }, (res) => {
+    const savedPin = localStorage.getItem('python_wc_player_pin') || '';
+    socket.emit('join-game', { roomId, id: playerId, name: nameToJoin, pin: savedPin }, (res) => {
       setSubmitting(false);
       if (res.success) {
         setJoined(true);
@@ -101,7 +149,7 @@ function PlayerView({ socket, playerId, nickname, setNickname, gameState, standi
     });
   };
 
-  const submitBet = (e) => {
+  function submitBet(e) {
     e.preventDefault();
     if (!answer || !prediction) {
       setErrorMessage('Please select both your answer and prediction.');
@@ -172,7 +220,16 @@ function PlayerView({ socket, playerId, nickname, setNickname, gameState, standi
     );
   }
 
-  const renderAuctionMode = () => {
+  function handleOpenSubmit(choice) {
+    setOpenAnswer(choice);
+    socket.emit('submit-open-answer', { roomId, playerId, answer: choice }, (res) => {
+      if (!res.success) {
+        setAuctionError(res.error || 'Failed to submit MCQ answer.');
+      }
+    });
+  }
+
+  function renderAuctionMode() {
     // Current user statistics
     const tokens = activeProfile?.fanTokens || 100;
     const rank = activeProfile?.currentRank || '-';
@@ -203,14 +260,7 @@ function PlayerView({ socket, playerId, nickname, setNickname, gameState, standi
       });
     };
 
-    const handleOpenSubmit = (choice) => {
-      setOpenAnswer(choice);
-      socket.emit('submit-open-answer', { roomId, playerId, answer: choice }, (res) => {
-        if (!res.success) {
-          setAuctionError(res.error || 'Failed to submit MCQ answer.');
-        }
-      });
-    };
+
 
     return (
       <div className="app-container" style={{ display: 'flex', flexDirection: 'column', minHeight: '90vh' }}>
@@ -578,59 +628,7 @@ function PlayerView({ socket, playerId, nickname, setNickname, gameState, standi
     );
   }
 
-  // Calculate statistics
-  const matches = activeProfile?.matchesPlayed || 0;
-  const goals = activeProfile?.goals || 0;
-  const misses = activeProfile?.misses || 0;
-  const accuracy = matches > 0 ? Math.round((goals / matches) * 100) : 0;
-  const streak = activeProfile?.currentStreak || 0;
-  const bestStreak = activeProfile?.bestStreak || 0;
-  const tokens = activeProfile?.fanTokens || 100;
-  const rank = activeProfile?.currentRank || '-';
-  const renderQuestionCard = (q) => {
-    if (!q) return null;
 
-    const imgEl = q.imageUrl ? (
-      <div style={{ flex: '1 1 200px', display: 'flex', justifyContent: 'center', alignItems: 'center', margin: '10px 0' }}>
-        <img
-          src={q.imageUrl}
-          alt="Question media"
-          style={{ maxWidth: '100%', maxHeight: '200px', borderRadius: '12px', border: '2px solid var(--glass-border)', objectFit: 'contain' }}
-        />
-      </div>
-    ) : null;
-
-    const textEl = (
-      <div style={{ flex: '2 1 250px', display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
-        <h3 style={{ fontSize: '18px', fontWeight: '700', lineHeight: '1.4', margin: '0 0 15px 0' }}>
-          {q.text}
-        </h3>
-      </div>
-    );
-
-    let flexDirection = 'column';
-    if (q.imageUrl) {
-      if (q.imageAlign === 'BOTTOM') flexDirection = 'column';
-      else if (q.imageAlign === 'LEFT') flexDirection = 'row-reverse';
-      else if (q.imageAlign === 'RIGHT') flexDirection = 'row';
-      else flexDirection = 'column-reverse'; // TOP
-    }
-
-    return (
-      <div style={{
-        display: 'flex',
-        flexDirection,
-        flexWrap: 'wrap',
-        alignItems: 'center',
-        justifyContent: 'center',
-        gap: '15px',
-        marginBottom: '20px'
-      }}>
-        {imgEl}
-        {textEl}
-      </div>
-    );
-  };
 
   function renderAuctionPlayerView() {
     const myGroup = Object.values(gameState.groups || {}).find(g => g.playerIds.includes(playerId));
@@ -643,6 +641,7 @@ function PlayerView({ socket, playerId, nickname, setNickname, gameState, standi
     const isWinner = gameState.auctionWinner === myGroupId;
     const isLeading = gameState.highestBidder === myGroupId;
     const highestBidderName = gameState.highestBidder ? (gameState.groups && gameState.groups[gameState.highestBidder]?.name) : 'No bids';
+    const hasSubmittedOpen = gameState.submittedPlayerIds && gameState.submittedPlayerIds.includes(playerId);
 
     const handlePlaceBid = () => {
       if (!myGroupId) return alert("You are not assigned to a team yet. Ask the Organizer!");
@@ -813,6 +812,102 @@ function PlayerView({ socket, playerId, nickname, setNickname, gameState, standi
             <h3 style={{ fontSize: '18px', fontWeight: '800', color: 'var(--gold-trophy)' }}>GAME COMPLETED</h3>
             <p style={{ color: 'var(--text-secondary)', fontSize: '13px', lineHeight: '1.4' }}>
               The Auction is completed! Check the projector screen to see the final team standings and the grand reveal of the winner!
+            </p>
+          </div>
+        )}
+
+        {/* OPEN QUESTION ACTIVE */}
+        {gameState.gameState === 'OPEN_QUESTION_ACTIVE' && (
+          <div className="glass-panel" style={{ padding: '25px' }}>
+            <span style={{ fontSize: '12px', background: 'rgba(0, 176, 255, 0.1)', padding: '4px 12px', borderRadius: '20px', color: '#00b0ff', width: 'fit-content', margin: '0 auto 15px auto', fontWeight: 'bold', display: 'block' }}>
+              📢 OPEN QUESTION ROUND (ALL TEAMS PLAY)
+            </span>
+
+            {renderQuestionCard(gameState.activeQuestion)}
+
+            {!hasSubmittedOpen ? (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '15px', marginTop: '20px' }}>
+                <label style={{ fontSize: '12px', color: 'var(--text-secondary)', fontWeight: 'bold' }}>
+                  SELECT YOUR OPTION
+                </label>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '12px' }}>
+                  {(gameState.activeQuestion?.options || []).map((opt, idx) => {
+                    const letter = String.fromCharCode(65 + idx); // A, B, C, D
+                    return (
+                      <button
+                        key={idx}
+                        type="button"
+                        onClick={() => handleOpenSubmit(letter)}
+                        style={{
+                          padding: '14px 20px',
+                          borderRadius: '10px',
+                          border: '1px solid var(--glass-border)',
+                          background: 'var(--input-bg)',
+                          color: 'white',
+                          fontWeight: 'bold',
+                          fontSize: '14px',
+                          textAlign: 'left',
+                          cursor: 'pointer',
+                          transition: 'all 0.1s ease',
+                          display: 'flex',
+                          gap: '10px',
+                          alignItems: 'center'
+                        }}
+                      >
+                        <span style={{ background: 'rgba(255,255,255,0.08)', width: '24px', height: '24px', borderRadius: '4px', display: 'flex', justifyContent: 'center', alignItems: 'center', color: '#00b0ff', fontWeight: '900' }}>
+                          {letter}
+                        </span>
+                        <span>{opt}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            ) : (
+              <div style={{ textAlign: 'center', padding: '30px 0' }}>
+                <div style={{ fontSize: '40px' }}>🔒</div>
+                <h3 style={{ color: '#00b0ff', fontWeight: 'bold', marginTop: '10px' }}>SELECTION LOCKED IN</h3>
+                <p style={{ color: 'var(--text-secondary)', fontSize: '13px', marginTop: '5px' }}>
+                  You chose option: **{openAnswer || 'Submitted'}** <br />
+                  Waiting for all teams to answer and referee to reveal.
+                </p>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* OPEN QUESTION REVEAL */}
+        {gameState.gameState === 'OPEN_QUESTION_REVEAL' && (
+          <div className="glass-panel" style={{ padding: '30px', textAlign: 'center', display: 'flex', flexDirection: 'column', gap: '20px' }}>
+            <h2 style={{ fontSize: '22px', fontWeight: '800', color: '#00b0ff' }}>OPEN ROUND RESULTS</h2>
+
+            <div style={{ background: 'rgba(255,255,255,0.05)', padding: '20px', borderRadius: '12px', border: '1px solid var(--glass-border)', maxWidth: '400px', width: '100%', margin: '0 auto' }}>
+              <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>CORRECT MCQ ANSWER</div>
+              <div style={{ fontSize: '32px', fontWeight: '950', color: 'var(--pitch-accent)', margin: '5px 0' }}>
+                Option {gameState.lastResults?.correctAnswer}
+              </div>
+            </div>
+
+            <div style={{ background: 'rgba(255,255,255,0.02)', padding: '15px', borderRadius: '12px', border: '1px solid rgba(255,255,255,0.05)' }}>
+              <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '10px' }}>ROUND PAYOUTS</div>
+              {Object.keys(gameState.lastResults?.submissions || {}).map(pId => {
+                const pSub = gameState.lastResults?.submissions[pId];
+                const pObj = Array.isArray(standings) ? standings.find(p => p.id === pId) : null;
+                const isPcorrect = pSub?.answer === gameState.lastResults?.correctAnswer;
+                
+                return (
+                  <div key={pId} style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', borderBottom: '1px solid rgba(255,255,255,0.03)', fontSize: '13px' }}>
+                    <span><strong>{pObj?.name || 'Team'}</strong> (Chose {pSub?.answer || 'None'})</span>
+                    <span style={{ color: isPcorrect ? 'var(--pitch-accent)' : '#ffb300', fontWeight: 'bold' }}>
+                      {isPcorrect ? '+50 🪙' : '+10 🪙'}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+
+            <p style={{ color: 'var(--text-muted)', fontSize: '12px' }}>
+              Waiting for the next round to begin...
             </p>
           </div>
         )}

@@ -103,6 +103,16 @@ function verifyJwt(token) {
   }
 }
 
+function getActiveQuestion(room) {
+  if (!room || !room.currentQuestionId) return null;
+  const q = (room.questions || []).find(x => x.id === room.currentQuestionId);
+  if (q) return q;
+  const oq = (room.openQuestions || []).find(x => x.id === room.currentQuestionId);
+  if (oq) return oq;
+  return null;
+}
+
+
 // Load database from Supabase
 async function initDb() {
   try {
@@ -121,9 +131,16 @@ async function initDb() {
 
     // Run schema migrations/setup if empty
     if (!db.adminPassword) db.adminPassword = '1234';
-    if (!db.organizers) db.organizers = { "admin": "admin", "Jean": "J2710" };
+    if (!db.organizers) db.organizers = { "Jean": "J2710" };
+    // Enforce removal of default "admin" account
+    if (db.organizers && db.organizers["admin"]) {
+      delete db.organizers["admin"];
+      console.log('Wiped default "admin" organizer account from database.');
+    }
     if (!db.accounts) db.accounts = {};
     dbInMemory.accounts = db.accounts;
+    dbInMemory.organizers = db.organizers;
+    dbInMemory.adminPassword = db.adminPassword;
     if (!db.rooms) {
       db.rooms = {
         "prediction": {
@@ -328,9 +345,9 @@ async function initDb() {
         auctionWinner: r.auctionWinner || null,
         teamsLocked: r.teamsLocked || false,
         groups: r.groups || {
-          "A": { id: "A", name: "Team A", playerIds: [], tokens: 100, itemsWon: [], bidderId: null },
-          "B": { id: "B", name: "Team B", playerIds: [], tokens: 100, itemsWon: [], bidderId: null },
-          "C": { id: "C", name: "Team C", playerIds: [], tokens: 100, itemsWon: [], bidderId: null }
+          "A": { id: "A", name: "Team A", playerIds: [], tokens: 0, itemsWon: [], bidderId: null },
+          "B": { id: "B", name: "Team B", playerIds: [], tokens: 0, itemsWon: [], bidderId: null },
+          "C": { id: "C", name: "Team C", playerIds: [], tokens: 0, itemsWon: [], bidderId: null }
         }
       };
     });
@@ -347,7 +364,7 @@ async function saveDbToSupabase() {
   try {
     const data = {
       adminPassword: dbInMemory.adminPassword || '1234',
-      organizers: dbInMemory.organizers || { "admin": "admin", "Jean": "J2710" },
+      organizers: dbInMemory.organizers || { "Jean": "J2710" },
       accounts: dbInMemory.accounts || {},
       rooms: {}
     };
@@ -526,7 +543,7 @@ app.post('/api/register', (req, res) => {
   if (regKey !== 'python-prefreshyCUP-2026') {
     return res.status(401).json({ error: 'Invalid master registration key.' });
   }
-  if (!dbInMemory.organizers) dbInMemory.organizers = { "admin": "admin", "Jean": "J2710" };
+  if (!dbInMemory.organizers) dbInMemory.organizers = { "Jean": "J2710" };
   if (dbInMemory.organizers[username]) {
     return res.status(400).json({ error: 'Username is already registered.' });
   }
@@ -538,7 +555,7 @@ app.post('/api/register', (req, res) => {
 // Login Organizer
 app.post('/api/login', (req, res) => {
   const { username, password } = req.body;
-  if (!dbInMemory.organizers) dbInMemory.organizers = { "admin": "admin", "Jean": "J2710" };
+  if (!dbInMemory.organizers) dbInMemory.organizers = { "Jean": "J2710" };
   if (dbInMemory.organizers[username] && dbInMemory.organizers[username] === password) {
     const token = signJwt({ username });
     res.json({ success: true, token });
@@ -660,7 +677,7 @@ app.get('/api/state/:roomId', (req, res) => {
   res.json({
     gameState: room.gameState,
     currentQuestionId: room.currentQuestionId,
-    activeQuestion: room.questions.find(q => q.id === room.currentQuestionId) || null,
+    activeQuestion: getActiveQuestion(room) || null,
     submissionsCount: Object.keys(room.submissions).length,
     totalPlayers: Object.keys(room.players).length,
     config: room.config,
@@ -746,7 +763,7 @@ io.on('connection', (socket) => {
       success: true,
       gameState: room.gameState,
       currentQuestionId: room.currentQuestionId,
-      activeQuestion: room.questions.find(q => q.id === room.currentQuestionId) || null,
+      activeQuestion: getActiveQuestion(room) || null,
       submissionsCount: Object.keys(room.submissions).length,
       config: room.config,
       timerSecondsRemaining: room.timerSecondsRemaining,
@@ -764,7 +781,7 @@ io.on('connection', (socket) => {
   });
 
   // Player joins/reclaims game inside a room
-  socket.on('join-game', ({ roomId, id, name }, callback) => {
+  socket.on('join-game', ({ roomId, id, name, pin }, callback) => {
     if (!roomId) {
       return callback?.({ success: false, error: 'Room ID is required.' });
     }
@@ -780,9 +797,13 @@ io.on('connection', (socket) => {
     const trimmedName = name.trim();
     const normalized = trimmedName.toLowerCase();
 
-    // Verify that player account exists
-    if (!dbInMemory.accounts || !dbInMemory.accounts[id.toLowerCase()]) {
+    // Verify that player account exists and PIN matches
+    const account = dbInMemory.accounts && dbInMemory.accounts[id.toLowerCase()];
+    if (!account) {
       return callback?.({ success: false, error: 'This player account does not exist!' });
+    }
+    if (account.pin !== pin) {
+      return callback?.({ success: false, error: 'Authentication failed: Invalid login PIN.' });
     }
 
     // Server-side check for rude names (Guardian System)
@@ -848,7 +869,7 @@ io.on('connection', (socket) => {
       success: true,
       player,
       gameState: room.gameState,
-      activeQuestion: room.questions.find(q => q.id === room.currentQuestionId) || null,
+      activeQuestion: getActiveQuestion(room) || null,
       submissions: room.submissions[id] || null
     });
   });
@@ -926,7 +947,7 @@ io.on('connection', (socket) => {
       io.to(roomId).emit('state-sync', {
         gameState: room.gameState,
         currentQuestionId: room.currentQuestionId,
-        activeQuestion: room.questions.find(q => q.id === room.currentQuestionId) || null,
+        activeQuestion: getActiveQuestion(room) || null,
         submissionsCount: subCount,
         config: room.config,
         timerSecondsRemaining: 0,
@@ -1008,7 +1029,7 @@ io.on('connection', (socket) => {
     io.to(roomId).emit('state-sync', {
       gameState: room.gameState,
       currentQuestionId: room.currentQuestionId,
-      activeQuestion: room.questions.find(q => q.id === room.currentQuestionId) || null,
+      activeQuestion: getActiveQuestion(room) || null,
       submissionsCount: Object.keys(room.submissions).length,
       config: room.config,
       timerSecondsRemaining: 0,
@@ -1073,7 +1094,9 @@ io.on('connection', (socket) => {
 
         if (!sub) return;
 
-        player.matchesPlayed++;
+        if (!isPreMatch) {
+          player.matchesPlayed++;
+        }
         let earned = 0;
 
         if (outcome === 'PUSH') {
@@ -1093,9 +1116,11 @@ io.on('connection', (socket) => {
         } else {
           const isCorrect = sub.prediction === outcome;
           if (isCorrect) {
-            player.goals++;
-            player.currentStreak++;
-            player.bestStreak = Math.max(player.bestStreak, player.currentStreak);
+            if (!isPreMatch) {
+              player.goals++;
+              player.currentStreak++;
+              player.bestStreak = Math.max(player.bestStreak, player.currentStreak);
+            }
             if (isPreMatch) {
               earned = 0;
             } else if (sub.useGoldenGoal) {
@@ -1106,8 +1131,10 @@ io.on('connection', (socket) => {
               earned = room.config.correctPredictionReward || 10;
             }
           } else {
-            player.misses++;
-            player.currentStreak = 0;
+            if (!isPreMatch) {
+              player.misses++;
+              player.currentStreak = 0;
+            }
             earned = 0;
           }
 
@@ -1177,7 +1204,7 @@ io.on('connection', (socket) => {
     io.to(roomId).emit('state-sync', {
       gameState: room.gameState,
       currentQuestionId: room.currentQuestionId,
-      activeQuestion: room.questions.find(q => q.id === room.currentQuestionId) || null,
+      activeQuestion: getActiveQuestion(room) || null,
       submissionsCount: Object.keys(room.submissions).length,
       config: room.config,
       timerSecondsRemaining: room.timerSecondsRemaining,
@@ -1256,7 +1283,7 @@ io.on('connection', (socket) => {
     io.to(roomId).emit('state-sync', {
       gameState: room.gameState,
       currentQuestionId: room.currentQuestionId,
-      activeQuestion: room.questions.find(q => q.id === room.currentQuestionId) || null,
+      activeQuestion: getActiveQuestion(room) || null,
       submissionsCount: 0,
       config: room.config,
       timerSecondsRemaining: room.timerSecondsRemaining,
@@ -1271,15 +1298,23 @@ io.on('connection', (socket) => {
     const room = getRoomById(roomId);
     if (!room) return callback?.({ success: false, error: 'Room not found.' });
 
-    const question = room.questions.find(q => q.id === questionId);
+    const question = room.questions && room.questions.find(q => q.id === questionId);
     if (question) {
       question.isPlayed = false;
       syncDb();
       io.to(roomId).emit('questions-update', room.questions);
-      callback?.({ success: true });
-    } else {
-      callback?.({ success: false, error: 'Question not found.' });
+      return callback?.({ success: true });
     }
+
+    const openQuestion = room.openQuestions && room.openQuestions.find(q => q.id === questionId);
+    if (openQuestion) {
+      openQuestion.isPlayed = false;
+      syncDb();
+      io.to(roomId).emit('open-questions-update', room.openQuestions);
+      return callback?.({ success: true });
+    }
+
+    callback?.({ success: false, error: 'Question not found.' });
   });
 
   // Emergency Offline Mode
@@ -1313,9 +1348,11 @@ io.on('connection', (socket) => {
       const sub = room.submissions[id];
 
       if (!sub) {
-        player.matchesPlayed++;
-        player.misses++;
-        player.currentStreak = 0;
+        if (!isPreMatch) {
+          player.matchesPlayed++;
+          player.misses++;
+          player.currentStreak = 0;
+        }
         player.fanTokens += partReward;
 
         player.history.push({
@@ -1331,7 +1368,9 @@ io.on('connection', (socket) => {
         return;
       }
 
-      player.matchesPlayed++;
+      if (!isPreMatch) {
+        player.matchesPlayed++;
+      }
 
       if (outcome === 'PUSH') {
         const earned = isPreMatch ? 0 : 8; // Award 8 tokens for predicting a tie
@@ -1351,9 +1390,11 @@ io.on('connection', (socket) => {
         const isCorrect = sub.prediction === outcome;
         let earned = 0;
         if (isCorrect) {
-          player.goals++;
-          player.currentStreak++;
-          player.bestStreak = Math.max(player.bestStreak, player.currentStreak);
+          if (!isPreMatch) {
+            player.goals++;
+            player.currentStreak++;
+            player.bestStreak = Math.max(player.bestStreak, player.currentStreak);
+          }
           if (isPreMatch) {
             earned = 0;
           } else if (sub.useGoldenGoal) {
@@ -1364,8 +1405,10 @@ io.on('connection', (socket) => {
             earned = room.config.correctPredictionReward || 10;
           }
         } else {
-          player.misses++;
-          player.currentStreak = 0;
+          if (!isPreMatch) {
+            player.misses++;
+            player.currentStreak = 0;
+          }
           earned = 0;
         }
 
@@ -1438,7 +1481,7 @@ io.on('connection', (socket) => {
     io.to(roomId).emit('state-sync', {
       gameState: room.gameState,
       currentQuestionId: room.currentQuestionId,
-      activeQuestion: room.questions.find(q => q.id === room.currentQuestionId) || null,
+      activeQuestion: getActiveQuestion(room) || null,
       submissionsCount: Object.keys(room.submissions).length,
       config: room.config,
       timerSecondsRemaining: room.timerSecondsRemaining
@@ -1605,7 +1648,7 @@ io.on('connection', (socket) => {
     io.to(roomId).emit('state-sync', {
       gameState: room.gameState,
       currentQuestionId: room.currentQuestionId,
-      activeQuestion: room.questions.find(q => q.id === room.currentQuestionId),
+      activeQuestion: getActiveQuestion(room),
       submissionsCount: 1,
       config: room.config,
       timerSecondsRemaining: 0,
@@ -1741,7 +1784,8 @@ io.on('connection', (socket) => {
       activeQuestion: question,
       submissionsCount: 0,
       config: room.config,
-      timerSecondsRemaining: 0
+      timerSecondsRemaining: 0,
+      submittedPlayerIds: []
     });
 
     callback?.({ success: true });
@@ -1760,8 +1804,9 @@ io.on('connection', (socket) => {
     syncDb();
 
     // Broadcast count update
-    io.to(roomId).emit('submissions-count-update', {
+    io.to(roomId).emit('submission-count-update', {
       count: Object.keys(room.submissions).length,
+      total: Object.keys(room.players).length,
       submittedPlayerIds: Object.keys(room.submissions)
     });
 
@@ -1825,13 +1870,18 @@ io.on('connection', (socket) => {
 
   // Admin Update Custom Open Questions List
   socket.on('admin-update-open-questions', ({ roomId, openQuestions }, callback) => {
-    const room = getRoomById(roomId);
-    if (!room) return callback?.({ success: false, error: 'Room not found.' });
+    try {
+      const room = getRoomById(roomId);
+      if (!room) return callback?.({ success: false, error: 'Room not found.' });
 
-    room.openQuestions = openQuestions;
-    syncDb();
-    io.to(roomId).emit('open-questions-update', openQuestions);
-    callback?.({ success: true });
+      room.openQuestions = openQuestions || [];
+      syncDb();
+      io.to(roomId).emit('open-questions-update', room.openQuestions);
+      callback?.({ success: true });
+    } catch (err) {
+      console.error('Error in admin-update-open-questions:', err);
+      callback?.({ success: false, error: err.message });
+    }
   });
 
   // Manual Adjust Tokens
@@ -1880,6 +1930,19 @@ io.on('connection', (socket) => {
     room.submissions = {};
     room.questionStats = [];
     stopQuestionTimer(room);
+
+    if (roomId === 'auction') {
+      room.groups = {
+        "A": { id: "A", name: "Team A", playerIds: [], tokens: 0, itemsWon: [], bidderId: null },
+        "B": { id: "B", name: "Team B", playerIds: [], tokens: 0, itemsWon: [], bidderId: null },
+        "C": { id: "C", name: "Team C", playerIds: [], tokens: 0, itemsWon: [], bidderId: null }
+      };
+      room.currentBid = 10;
+      room.highestBidder = null;
+      room.auctionWinner = null;
+      room.teamsLocked = false;
+    }
+
     syncDb();
 
     io.to(roomId).emit('state-sync', {
@@ -1888,7 +1951,12 @@ io.on('connection', (socket) => {
       activeQuestion: null,
       submissionsCount: 0,
       config: room.config,
-      timerSecondsRemaining: 0
+      timerSecondsRemaining: 0,
+      groups: room.groups || null,
+      teamsLocked: room.teamsLocked || false,
+      currentBid: room.currentBid || 10,
+      highestBidder: room.highestBidder || null,
+      auctionWinner: room.auctionWinner || null
     });
     io.to(roomId).emit('standings-update', []);
     callback?.({ success: true });
@@ -1923,6 +1991,60 @@ io.on('connection', (socket) => {
     }
     dbInMemory.accounts[normalized].pin = newPin;
     syncDb();
+    callback?.({ success: true });
+  });
+
+  // Delete a player's account
+  socket.on('admin-delete-player-account', ({ roomId, username }, callback) => {
+    if (!username) {
+      return callback?.({ success: false, error: 'Missing parameters.' });
+    }
+    const normalized = username.trim().toLowerCase();
+    if (!dbInMemory.accounts || !dbInMemory.accounts[normalized]) {
+      return callback?.({ success: false, error: 'Account not found.' });
+    }
+    
+    // Delete from registered accounts
+    delete dbInMemory.accounts[normalized];
+    
+    // Also remove them from active room player sessions if they are currently inside rooms
+    ['prediction', 'auction'].forEach(rId => {
+      const room = getRoomById(rId);
+      if (room && room.players) {
+        if (room.players[username]) {
+          delete room.players[username];
+        }
+        if (room.groups) {
+          Object.values(room.groups).forEach(g => {
+            if (g.playerIds) {
+              g.playerIds = g.playerIds.filter(id => id !== username);
+              if (g.bidderId === username) {
+                g.bidderId = g.playerIds[0] || null;
+              }
+            }
+          });
+        }
+      }
+    });
+
+    syncDb();
+    
+    // Broadcast updates to all players and organizers in both rooms
+    ['prediction', 'auction'].forEach(rId => {
+      const room = getRoomById(rId);
+      if (room) {
+        io.to(rId).emit('state-sync', {
+          gameState: room.gameState,
+          currentQuestionId: room.currentQuestionId,
+          activeQuestion: room.activeQuestion,
+          submissionsCount: Object.keys(room.submissions || {}).length,
+          config: room.config,
+          groups: room.groups
+        });
+        io.to(rId).emit('standings-update', getSortedPlayers(room));
+      }
+    });
+
     callback?.({ success: true });
   });
 

@@ -74,10 +74,9 @@ function OrganizerView({ socket, gameState, standings: rawStandings, roomId, roo
         timerDuration: parseInt(timerDuration) || 0
       }
     }, (res) => {
-      if (res.success) {
-        setShowSettings(false);
-      }
+      setShowSettings(false);
     });
+    setShowSettings(false);
   };
 
   // Convert File Input to Base64
@@ -374,37 +373,44 @@ function OrganizerView({ socket, gameState, standings: rawStandings, roomId, roo
     // CRUD Open Questions
     const saveOpenQuestion = (e) => {
       e.preventDefault();
-      if (!oqText.trim() || !oqA.trim() || !oqB.trim() || !oqC.trim() || !oqD.trim()) return;
-
-      let updated = [...(gameState.openQuestions || [])];
-      const newQ = {
-        id: editingOqId || 'oq-' + Date.now(),
-        text: oqText.trim(),
-        options: [oqA.trim(), oqB.trim(), oqC.trim(), oqD.trim()],
-        correctAnswer: oqCorrect,
-        isPlayed: false
-      };
-
-      if (editingOqId) {
-        updated = updated.map(q => q.id === editingOqId ? newQ : q);
-      } else {
-        updated.push(newQ);
-      }
-
-      socket.emit('admin-update-open-questions', { roomId, adminToken, openQuestions: updated }, (res) => {
-        if (res.success) {
-          setShowAddOpenQuestion(false);
-          setOqText('');
-          setOqA('');
-          setOqB('');
-          setOqC('');
-          setOqD('');
-          setOqCorrect('A');
-          setEditingOqId(null);
-        } else {
-          alert(res.error || 'Failed to update open questions.');
+      try {
+        if (!oqText.trim() || !oqA.trim() || !oqB.trim() || !oqC.trim() || !oqD.trim()) {
+          alert("All fields are required. Please fill in the question and all four options.");
+          return;
         }
-      });
+
+        let updated = [...(gameState.openQuestions || [])];
+        const newQ = {
+          id: editingOqId || 'oq-' + Date.now(),
+          text: oqText.trim(),
+          options: [oqA.trim(), oqB.trim(), oqC.trim(), oqD.trim()],
+          correctAnswer: oqCorrect,
+          isPlayed: false
+        };
+
+        if (editingOqId) {
+          updated = updated.map(q => q.id === editingOqId ? newQ : q);
+        } else {
+          updated.push(newQ);
+        }
+
+        socket.emit('admin-update-open-questions', { roomId, adminToken, openQuestions: updated }, (res) => {
+          if (res && res.success) {
+            setShowAddOpenQuestion(false);
+            setOqText('');
+            setOqA('');
+            setOqB('');
+            setOqC('');
+            setOqD('');
+            setOqCorrect('A');
+            setEditingOqId(null);
+          } else {
+            alert(res?.error || 'Failed to update open questions.');
+          }
+        });
+      } catch (err) {
+        alert("Client-side Error: " + err.message);
+      }
     };
 
     const deleteOpenQuestion = (qId) => {
@@ -427,16 +433,16 @@ function OrganizerView({ socket, gameState, standings: rawStandings, roomId, roo
     // Reset game handler
     const triggerReset = () => {
       if (window.confirm('WARNING: This wipes all registered Teams and resets standings. Proceed?')) {
-        socket.emit('admin-reset-game', { roomId });
+        socket.emit('admin-reset-game', { roomId, adminToken });
       }
     };
 
     // Render Groups layout in Lobby
     const renderLobbyGroupsManager = () => {
       const groups = gameState.groups || {
-        "A": { id: "A", name: "Team A", playerIds: [], tokens: 100, itemsWon: [] },
-        "B": { id: "B", name: "Team B", playerIds: [], tokens: 100, itemsWon: [] },
-        "C": { id: "C", name: "Team C", playerIds: [], tokens: 100, itemsWon: [] }
+        "A": { id: "A", name: "Team A", playerIds: [], tokens: 0, itemsWon: [] },
+        "B": { id: "B", name: "Team B", playerIds: [], tokens: 0, itemsWon: [] },
+        "C": { id: "C", name: "Team C", playerIds: [], tokens: 0, itemsWon: [] }
       };
       const teamsLocked = gameState.teamsLocked || false;
 
@@ -695,9 +701,9 @@ function OrganizerView({ socket, gameState, standings: rawStandings, roomId, roo
     // Render Endgame Podium item-reveal controls
     const renderEndgamePodiumSteward = () => {
       const groups = gameState.groups || {
-        "A": { id: "A", name: "Team A", playerIds: [], tokens: 100, itemsWon: [] },
-        "B": { id: "B", name: "Team B", playerIds: [], tokens: 100, itemsWon: [] },
-        "C": { id: "C", name: "Team C", playerIds: [], tokens: 100, itemsWon: [] }
+        "A": { id: "A", name: "Team A", playerIds: [], tokens: 0, itemsWon: [] },
+        "B": { id: "B", name: "Team B", playerIds: [], tokens: 0, itemsWon: [] },
+        "C": { id: "C", name: "Team C", playerIds: [], tokens: 0, itemsWon: [] }
       };
 
       const handleRevealItem = (tId, idx) => {
@@ -750,6 +756,35 @@ function OrganizerView({ socket, gameState, standings: rawStandings, roomId, roo
                 </div>
               </div>
             ))}
+          </div>
+
+          <div style={{ display: 'flex', gap: '15px', justifyContent: 'flex-end', marginTop: '25px', paddingTop: '20px', borderTop: '1px solid var(--glass-border)' }}>
+            <button
+              type="button"
+              className="btn-primary"
+              style={{
+                background: 'linear-gradient(135deg, #00b0ff 0%, #00e676 100%)',
+                color: 'black',
+                fontWeight: 'bold',
+                padding: '10px 20px',
+                fontSize: '13px',
+                border: 'none',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px'
+              }}
+              onClick={() => {
+                if (window.confirm('Reset game back to Lobby for the next match? (All teams, tokens, and current inventories will be preserved).')) {
+                  socket.emit('admin-next-auction-match', { roomId, adminToken }, (res) => {
+                    if (!res.success) {
+                      alert(res.error || 'Failed to reset match.');
+                    }
+                  });
+                }
+              }}
+            >
+              <RefreshCw size={16} /> Play Again (Reset to Lobby)
+            </button>
           </div>
         </div>
       );
@@ -956,9 +991,20 @@ function OrganizerView({ socket, gameState, standings: rawStandings, roomId, roo
                           <Trash2 size={12} className="red-card" />
                         </button>
                         {q.isPlayed ? (
-                          <span style={{ fontSize: '11px', background: 'rgba(255,255,255,0.03)', color: 'var(--text-muted)', padding: '6px 12px', borderRadius: '4px', border: '1px solid rgba(255,255,255,0.05)' }}>
-                            PLAYED 🔒
-                          </span>
+                          <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+                            <span style={{ fontSize: '11px', background: 'rgba(255,255,255,0.03)', color: 'var(--text-muted)', padding: '6px 12px', borderRadius: '4px', border: '1px solid rgba(255,255,255,0.05)' }}>
+                              PLAYED 🔒
+                            </span>
+                            <button
+                              type="button"
+                              className="btn-secondary"
+                              onClick={() => unlockQuestion(q.id)}
+                              style={{ padding: '6px 12px', fontSize: '11px', borderColor: 'var(--pitch-accent-glow)', color: 'var(--pitch-accent)', display: 'inline-flex', alignItems: 'center', gap: '3px' }}
+                              title="Unlock MCQ Question"
+                            >
+                              <Unlock size={11} /> Unlock
+                            </button>
+                          </div>
                         ) : (
                           <button type="button" className="btn-primary" style={{ padding: '6px 12px', fontSize: '11px', background: '#00b0ff', color: 'black' }} onClick={() => handleLaunchOpenQuestion(q.id)}>
                             LAUNCH MCQ 📢

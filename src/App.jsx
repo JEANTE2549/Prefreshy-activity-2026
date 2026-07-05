@@ -4,7 +4,7 @@ import PlayerView from './views/PlayerView.jsx';
 import OrganizerView from './views/OrganizerView.jsx';
 import ProjectorView from './views/ProjectorView.jsx';
 import AuctionPlaceholderView from './views/AuctionPlaceholderView.jsx';
-import { LogOut, Lock, Play, Settings, Layers, UserPlus, Info, Edit } from 'lucide-react';
+import { LogOut, Lock, Play, Settings, Layers, UserPlus, Info, Edit, Trash2 } from 'lucide-react';
 
 const socket = io(window.location.origin);
 
@@ -167,6 +167,23 @@ function App() {
       }
     });
   };
+
+  const handleDeletePlayerAccount = (username) => {
+    if (window.confirm(`Are you sure you want to permanently delete player account "${username}"? This will also remove them from all active groups/standings.`)) {
+      socket.emit('admin-delete-player-account', { roomId: 'prediction', adminToken, username }, (res) => {
+        if (res.success) {
+          alert("Player account deleted successfully!");
+          // Refresh list
+          socket.emit('admin-get-accounts', { roomId: 'prediction', adminToken }, (r) => {
+            if (r.success) setPlayerAccounts(r.accounts || []);
+          });
+        } else {
+          alert(res.error || "Failed to delete account.");
+        }
+      });
+    }
+  };
+
   const [isRegisterMode, setIsRegisterMode] = useState(false);
 
   // Auto-reset secret click count if idle for 1s
@@ -263,6 +280,16 @@ function App() {
       localStorage.removeItem('python_wc_admin_token');
     }
   }, [adminMode, currentView, roomId, roomName, adminToken]);
+
+  // Redirect admin to login if accessing admin views without active token
+  useEffect(() => {
+    if (currentView === 'admin-hub' || currentView === 'organizer') {
+      const savedAdminToken = localStorage.getItem('python_wc_admin_token') || adminToken;
+      if (!savedAdminToken) {
+        navigateTo('admin-login');
+      }
+    }
+  }, [currentView, adminToken]);
 
   // Redirect player to login if not logged in and no credentials saved
   useEffect(() => {
@@ -426,6 +453,10 @@ function App() {
 
     socket.on('questions-update', (questions) => {
       setGameState(prev => ({ ...prev, questions }));
+    });
+
+    socket.on('open-questions-update', (openQuestions) => {
+      setGameState(prev => ({ ...prev, openQuestions }));
     });
 
     socket.on('reveal-suspense-start', ({ style, ms }) => {
@@ -1330,6 +1361,13 @@ function App() {
                                   title="Change PIN"
                                 >
                                   <Edit size={14} />
+                                </button>
+                                <button
+                                  onClick={() => handleDeletePlayerAccount(acc.username)}
+                                  style={{ background: 'none', border: 'none', color: '#ff4d4d', cursor: 'pointer', display: 'flex', alignItems: 'center', marginLeft: '5px' }}
+                                  title="Delete Account"
+                                >
+                                  <Trash2 size={14} />
                                 </button>
                               </>
                             )}
