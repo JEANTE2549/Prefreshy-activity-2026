@@ -49,6 +49,12 @@ body {
   overflow-x: hidden;
 }
 
+@media (min-width: 768px) {
+  html, body {
+    overflow: hidden !important;
+  }
+}
+
 /* Animations */
 @keyframes pulse-glow {
 

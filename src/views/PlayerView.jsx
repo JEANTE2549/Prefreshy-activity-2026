@@ -13,7 +13,10 @@ function isRudeName(name) {
 }
 
 function PlayerView({ socket, playerId, nickname, setNickname, gameState, standings, roomId, roomName, onLeaveRoom }) {
-  const [joined, setJoined] = useState(false);
+  const [joined, setJoined] = useState(() => {
+    return !!localStorage.getItem('python_wc_player_nickname');
+  });
+  const [nicknameInput, setNicknameInput] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [playerInfo, setPlayerInfo] = useState(null);
 
@@ -46,10 +49,11 @@ function PlayerView({ socket, playerId, nickname, setNickname, gameState, standi
   // Find player profile in standings
   const activeProfile = Array.isArray(standings) ? standings.find(p => p.id === playerId) : null;
 
-  // Auto-join if nickname is already present in state
+  // Auto-join if nickname is already cached in localStorage
   useEffect(() => {
-    if (nickname && playerId) {
-      handleJoin(nickname);
+    const savedNickname = localStorage.getItem('python_wc_player_nickname');
+    if (savedNickname && playerId) {
+      handleJoin(savedNickname);
     }
   }, [playerId]);
 
@@ -81,6 +85,7 @@ function PlayerView({ socket, playerId, nickname, setNickname, gameState, standi
       if (res.success) {
         setJoined(true);
         setPlayerInfo(res.player);
+        setNickname(nameToJoin);
         localStorage.setItem('python_wc_player_nickname', nameToJoin);
         // If a submission exists for current question
         if (res.submissions) {
@@ -135,7 +140,7 @@ function PlayerView({ socket, playerId, nickname, setNickname, gameState, standi
             {roomId === 'auction' ? '🔨 PYTHON DUTCH AUCTION 🔨' : '⚽ PREDICTION CHALLENGE ⚽'}
           </p>
 
-          <form onSubmit={(e) => { e.preventDefault(); handleJoin(nickname); }}>
+          <form onSubmit={(e) => { e.preventDefault(); handleJoin(nicknameInput); }}>
             <div style={{ marginBottom: '20px', textAlign: 'left' }}>
               <label style={{ fontSize: '14px', color: 'var(--text-secondary)', display: 'block', marginBottom: '8px', fontWeight: '500' }}>
                 ENTER NICKNAME
@@ -144,8 +149,8 @@ function PlayerView({ socket, playerId, nickname, setNickname, gameState, standi
                 type="text"
                 className="text-input"
                 placeholder="e.g. PenaltyKing"
-                value={nickname}
-                onChange={(e) => setNickname(e.target.value)}
+                value={nicknameInput}
+                onChange={(e) => setNicknameInput(e.target.value)}
                 maxLength={15}
                 required
               />

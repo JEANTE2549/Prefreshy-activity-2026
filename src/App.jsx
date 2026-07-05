@@ -83,7 +83,7 @@ function App() {
   });
 
   const [standings, setStandings] = useState([]);
-  const [playerId, setPlayerId] = useState('');
+  const [playerId, setPlayerId] = useState(() => localStorage.getItem('python_wc_player_username') || '');
   const [adminToken, setAdminToken] = useState('');
   const [clickCount, setClickCount] = useState(0);
   const [playerPinInput, setPlayerPinInput] = useState('');
@@ -578,7 +578,7 @@ function App() {
     setRoomName('');
     setPinCode('');
     setAuthError('');
-    navigateTo('landing');
+    navigateTo('enter-room');
   };
 
   const handleSecretClick = () => {
@@ -811,7 +811,7 @@ function App() {
             }}>
               <h2 style={{ fontSize: '24px', fontWeight: '900', marginBottom: '8px' }}>🏟️ ENTER PLAYING FIELD</h2>
               <p style={{ color: '#c084fc', fontSize: '14px', marginBottom: '25px', fontWeight: 'bold' }}>
-                Welcome, {nickname}! 🏆
+                Welcome, {playerId || nickname}! 🏆
               </p>
 
               <form onSubmit={handleEnterRoom}>
