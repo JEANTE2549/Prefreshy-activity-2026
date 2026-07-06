@@ -330,6 +330,7 @@ async function initDb() {
           correctPredictionReward: 10,
           goldenGoalReward: 20,
           timerDuration: 0,
+          mcqTimerDuration: 20,
           revealStyle: "VAR"
         },
         questions: r.questions || [],
@@ -764,6 +765,7 @@ io.on('connection', (socket) => {
       gameState: room.gameState,
       currentQuestionId: room.currentQuestionId,
       activeQuestion: getActiveQuestion(room) || null,
+      lastResults: room.lastResults || null,
       submissionsCount: Object.keys(room.submissions).length,
       config: room.config,
       timerSecondsRemaining: room.timerSecondsRemaining,
@@ -870,6 +872,7 @@ io.on('connection', (socket) => {
       player,
       gameState: room.gameState,
       activeQuestion: getActiveQuestion(room) || null,
+      lastResults: room.lastResults || null,
       submissions: room.submissions[id] || null
     });
   });
@@ -1437,11 +1440,26 @@ io.on('connection', (socket) => {
       difficulty: question?.difficulty || 'MEDIUM'
     });
 
+    room.lastResults = {
+      gameState: room.gameState,
+      yesPercent,
+      noPercent,
+      yesCount,
+      noCount,
+      outcome,
+      winnerCount: getSortedPlayers(room).filter(p => {
+        const sub = room.submissions[p.id];
+        return sub && sub.prediction === outcome;
+      }).length,
+      players: getSortedPlayers(room)
+    };
+
     room.gameState = 'REVEALED';
     calculateRanks(room);
     syncDb();
 
     io.to(roomId).emit('results-revealed', {
+      gameState: room.gameState,
       yesPercent,
       noPercent,
       yesCount,
@@ -1558,7 +1576,7 @@ io.on('connection', (socket) => {
     if (!room) return callback?.({ success: false, error: 'Room not found.' });
 
     if (room.gameState !== 'AUCTION_DROPPING') {
-      return callback?.({ success: false, error: 'Auction is not active or already bought!' });
+      return callback?.({ success: false, error: 'Too slow! Another team bought it first!' });
     }
 
     const player = room.players[playerId];
@@ -1632,6 +1650,11 @@ io.on('connection', (socket) => {
   socket.on('submit-auction-answer', ({ roomId, playerId, answer }, callback) => {
     const room = getRoomById(roomId);
     if (!room) return callback?.({ success: false, error: 'Room not found.' });
+
+    const hasTeam = room.groups && Object.values(room.groups).some(g => g.playerIds.includes(playerId));
+    if (!hasTeam) {
+      return callback?.({ success: false, error: 'Spectators cannot answer.' });
+    }
 
     if (room.gameState !== 'AUCTION_ANSWERING') {
       return callback?.({ success: false, error: 'Not in answering phase!' });
@@ -1727,7 +1750,8 @@ io.on('connection', (socket) => {
     calculateRanks(room);
     syncDb();
 
-    io.to(roomId).emit('results-revealed', {
+    room.lastResults = {
+      gameState: room.gameState,
       winnerId,
       isCorrect,
       price: room.currentBid,
@@ -1736,7 +1760,8 @@ io.on('connection', (socket) => {
       submittedAnswer: sub?.answer || '',
       players: getSortedPlayers(room),
       bankruptcyAlert
-    });
+    };
+    io.to(roomId).emit('results-revealed', room.lastResults);
 
     io.to(roomId).emit('questions-update', room.questions);
     callback?.({ success: true });
@@ -1776,7 +1801,10 @@ io.on('connection', (socket) => {
     room.currentQuestionId = questionId;
     room.gameState = 'OPEN_QUESTION_ACTIVE';
     room.submissions = {};
+    stopQuestionTimer(room);
     syncDb();
+
+    const mcqTime = room.config.mcqTimerDuration !== undefined ? room.config.mcqTimerDuration : 20;
 
     io.to(roomId).emit('state-sync', {
       gameState: room.gameState,
@@ -1784,9 +1812,32 @@ io.on('connection', (socket) => {
       activeQuestion: question,
       submissionsCount: 0,
       config: room.config,
-      timerSecondsRemaining: 0,
+      timerSecondsRemaining: mcqTime,
       submittedPlayerIds: []
     });
+
+    if (mcqTime > 0) {
+      startQuestionTimer(
+        room,
+        mcqTime,
+        (sec) => {
+          io.to(roomId).emit('timer-tick', sec);
+        },
+        () => {
+          room.gameState = 'OPEN_QUESTION_CLOSED';
+          syncDb();
+          io.to(roomId).emit('state-sync', {
+            gameState: room.gameState,
+            currentQuestionId: room.currentQuestionId,
+            activeQuestion: question,
+            submissionsCount: Object.keys(room.submissions).length,
+            config: room.config,
+            timerSecondsRemaining: 0,
+            submittedPlayerIds: Object.keys(room.submissions)
+          });
+        }
+      );
+    }
 
     callback?.({ success: true });
   });
@@ -1795,6 +1846,11 @@ io.on('connection', (socket) => {
   socket.on('submit-open-answer', ({ roomId, playerId, answer }, callback) => {
     const room = getRoomById(roomId);
     if (!room) return callback?.({ success: false, error: 'Room not found.' });
+
+    const hasTeam = room.groups && Object.values(room.groups).some(g => g.playerIds.includes(playerId));
+    if (!hasTeam) {
+      return callback?.({ success: false, error: 'Spectators cannot participate in team questions.' });
+    }
 
     if (room.gameState !== 'OPEN_QUESTION_ACTIVE') {
       return callback?.({ success: false, error: 'Submissions are closed!' });
@@ -1818,9 +1874,11 @@ io.on('connection', (socket) => {
     const room = getRoomById(roomId);
     if (!room) return callback?.({ success: false, error: 'Room not found.' });
 
-    if (room.gameState !== 'OPEN_QUESTION_ACTIVE') {
+    if (room.gameState !== 'OPEN_QUESTION_ACTIVE' && room.gameState !== 'OPEN_QUESTION_CLOSED') {
       return callback?.({ success: false, error: 'Not in active open question!' });
     }
+
+    stopQuestionTimer(room);
 
     const question = room.openQuestions.find(q => q.id === room.currentQuestionId);
     if (!question) return callback?.({ success: false, error: 'Open question not found.' });
@@ -1858,11 +1916,13 @@ io.on('connection', (socket) => {
     calculateRanks(room);
     syncDb();
 
-    io.to(roomId).emit('results-revealed', {
+    room.lastResults = {
+      gameState: room.gameState,
       correctAnswer: question.correctAnswer,
       submissions: room.submissions,
       players: getSortedPlayers(room)
-    });
+    };
+    io.to(roomId).emit('results-revealed', room.lastResults);
 
     io.to(roomId).emit('open-questions-update', room.openQuestions);
     callback?.({ success: true });
@@ -2217,6 +2277,8 @@ io.on('connection', (socket) => {
 
   // Submit Bid increment (+5 tokens)
   socket.on('submit-bid', ({ roomId, teamId, playerId }, callback) => {
+    if (!teamId) return callback?.({ success: false, error: 'You are not assigned to a team.' });
+
     const room = getRoomById(roomId);
     if (!room) return callback?.({ success: false, error: 'Room not found.' });
 

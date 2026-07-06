@@ -411,6 +411,12 @@ function PlayerView({ socket, playerId, nickname, setNickname, gameState, standi
                     </form>
                   ) : (
                     <div style={{ textAlign: 'center', padding: '20px 0', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '10px' }}>
+                      {auctionError && (
+                        <div style={{ color: 'var(--red-card)', background: 'rgba(255,23,68,0.1)', padding: '15px', borderRadius: '10px', border: '2px solid var(--red-glow)', marginBottom: '15px', width: '100%' }}>
+                          <strong style={{ display: 'block', fontSize: '18px', marginBottom: '5px' }}>Too slow!</strong>
+                          <span style={{ fontSize: '14px' }}>{auctionError}</span>
+                        </div>
+                      )}
                       <div style={{ fontSize: '40px' }}>🔒</div>
                       <h3 style={{ color: 'var(--pitch-accent)', fontWeight: 'bold' }}>RESPONSE LOCKED IN</h3>
                       <p style={{ color: 'var(--text-secondary)', fontSize: '13px' }}>
@@ -468,7 +474,7 @@ function PlayerView({ socket, playerId, nickname, setNickname, gameState, standi
                       Scored a GOAL! 👍 (+{gameState.lastResults?.bonus} Tokens)
                     </div>
                   ) : (
-                    <div style={{ fontSize: '20px', color: 'var(--red-card)', fontWeight: 'bold', marginTop: '5px' }}>
+                <div style={{ fontSize: '20px', color: 'var(--red-card)', fontWeight: 'bold', marginTop: '5px' }}>
                       MISSED the penalty! 👎 (-{gameState.lastResults?.price} Tokens)
                     </div>
                   )}
@@ -481,16 +487,26 @@ function PlayerView({ socket, playerId, nickname, setNickname, gameState, standi
             </div>
           )}
 
-          {/* OPEN QUESTION ACTIVE */}
-          {gameState.gameState === 'OPEN_QUESTION_ACTIVE' && (
-            <div className="glass-panel" style={{ padding: '25px' }}>
+          {/* OPEN QUESTION ACTIVE & CLOSED */}
+          {(gameState.gameState === 'OPEN_QUESTION_ACTIVE' || gameState.gameState === 'OPEN_QUESTION_CLOSED') && (
+            <div className="glass-panel" style={{ padding: '25px', position: 'relative' }}>
+              {gameState.timerSecondsRemaining > 0 && (
+                <div style={{ position: 'absolute', top: '15px', right: '20px', background: 'rgba(255, 23, 68, 0.15)', border: '1px solid var(--red-glow)', color: 'var(--red-card)', padding: '4px 10px', borderRadius: '20px', fontWeight: 'bold', fontSize: '14px' }}>
+                  ⏱️ {gameState.timerSecondsRemaining}s
+                </div>
+              )}
               <span style={{ fontSize: '12px', background: 'rgba(0, 176, 255, 0.1)', padding: '4px 12px', borderRadius: '20px', color: '#00b0ff', width: 'fit-content', margin: '0 auto 15px auto', fontWeight: 'bold', display: 'block' }}>
                 📢 OPEN QUESTION ROUND (ALL TEAMS PLAY)
               </span>
 
               {renderQuestionCard(gameState.activeQuestion)}
 
-              {!hasSubmittedOpen ? (
+              {gameState.gameState === 'OPEN_QUESTION_CLOSED' ? (
+                <div style={{ textAlign: 'center', padding: '20px', color: 'var(--text-secondary)' }}>
+                  <strong style={{ fontSize: '16px', display: 'block', marginBottom: '8px', color: 'var(--pitch-accent)' }}>Submissions Closed</strong>
+                  <p style={{ fontSize: '12px' }}>Time is up! Waiting for the referee to reveal the result.</p>
+                </div>
+              ) : !hasSubmittedOpen ? (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '15px', marginTop: '20px' }}>
                   <label style={{ fontSize: '12px', color: 'var(--text-secondary)', fontWeight: 'bold' }}>
                     SELECT YOUR OPTION
@@ -513,16 +529,10 @@ function PlayerView({ socket, playerId, nickname, setNickname, gameState, standi
                             fontSize: '14px',
                             textAlign: 'left',
                             cursor: 'pointer',
-                            transition: 'all 0.1s ease',
-                            display: 'flex',
-                            gap: '10px',
-                            alignItems: 'center'
+                            transition: 'all 0.2s'
                           }}
                         >
-                          <span style={{ background: 'rgba(255,255,255,0.08)', width: '24px', height: '24px', borderRadius: '4px', display: 'flex', justifyContent: 'center', alignItems: 'center', color: '#00b0ff', fontWeight: '900' }}>
-                            {letter}
-                          </span>
-                          <span>{opt}</span>
+                          <span style={{ color: '#00b0ff', marginRight: '10px' }}>{letter}</span> {opt}
                         </button>
                       );
                     })}
@@ -633,8 +643,8 @@ function PlayerView({ socket, playerId, nickname, setNickname, gameState, standi
   function renderAuctionPlayerView() {
     const myGroup = Object.values(gameState.groups || {}).find(g => g.playerIds.includes(playerId));
     const myGroupId = myGroup ? myGroup.id : null;
-    const myGroupName = myGroup ? myGroup.name : 'No Team Assigned';
-    const myGroupTokens = myGroup ? myGroup.tokens : 100;
+    const myGroupName = myGroup ? myGroup.name : 'No Team Assigned (Spectator)';
+    const myGroupTokens = myGroup ? myGroup.tokens : '-';
 
     const currentPrice = gameState.currentBid || 10;
     const activeQuestion = gameState.activeQuestion;
@@ -720,7 +730,12 @@ function PlayerView({ socket, playerId, nickname, setNickname, gameState, standi
               </div>
             </div>
 
-            {(() => {
+            {!myGroupId ? (
+              <div style={{ textAlign: 'center', padding: '20px', color: 'var(--text-secondary)' }}>
+                <strong style={{ fontSize: '18px', display: 'block', marginBottom: '8px' }}>Spectator Mode</strong>
+                <p style={{ fontSize: '12px' }}>You are observing the auction. Waiting for team assignment.</p>
+              </div>
+            ) : (() => {
               const isBidder = myGroup && myGroup.bidderId === playerId;
               const bidderName = myGroup && myGroup.bidderId && Array.isArray(standings) ? (standings.find(p => p.id === myGroup.bidderId)?.name || 'Captain') : 'Captain';
               
@@ -799,6 +814,12 @@ function PlayerView({ socket, playerId, nickname, setNickname, gameState, standi
               </div>
             ) : (
               <div style={{ textAlign: 'center', color: 'var(--text-muted)', fontSize: '13px', padding: '10px 0' }}>
+                {auctionError && (
+                  <div style={{ color: 'var(--red-card)', background: 'rgba(255,23,68,0.1)', padding: '15px', borderRadius: '10px', border: '2px solid var(--red-glow)', marginBottom: '20px' }}>
+                    <strong style={{ display: 'block', fontSize: '16px', marginBottom: '5px' }}>Too slow!</strong>
+                    <span style={{ fontSize: '14px' }}>{auctionError}</span>
+                  </div>
+                )}
                 Wait for the winning team to deliver their verbal answer.
               </div>
             )}
@@ -816,16 +837,31 @@ function PlayerView({ socket, playerId, nickname, setNickname, gameState, standi
           </div>
         )}
 
-        {/* OPEN QUESTION ACTIVE */}
-        {gameState.gameState === 'OPEN_QUESTION_ACTIVE' && (
-          <div className="glass-panel" style={{ padding: '25px' }}>
+        {/* OPEN QUESTION ACTIVE & CLOSED */}
+        {(gameState.gameState === 'OPEN_QUESTION_ACTIVE' || gameState.gameState === 'OPEN_QUESTION_CLOSED') && (
+          <div className="glass-panel" style={{ padding: '25px', position: 'relative' }}>
+            {gameState.timerSecondsRemaining > 0 && (
+              <div style={{ position: 'absolute', top: '15px', right: '20px', background: 'rgba(255, 23, 68, 0.15)', border: '1px solid var(--red-glow)', color: 'var(--red-card)', padding: '4px 10px', borderRadius: '20px', fontWeight: 'bold', fontSize: '14px' }}>
+                ⏱️ {gameState.timerSecondsRemaining}s
+              </div>
+            )}
             <span style={{ fontSize: '12px', background: 'rgba(0, 176, 255, 0.1)', padding: '4px 12px', borderRadius: '20px', color: '#00b0ff', width: 'fit-content', margin: '0 auto 15px auto', fontWeight: 'bold', display: 'block' }}>
               📢 OPEN QUESTION ROUND (ALL TEAMS PLAY)
             </span>
 
             {renderQuestionCard(gameState.activeQuestion)}
 
-            {!hasSubmittedOpen ? (
+            {!myGroupId ? (
+              <div style={{ textAlign: 'center', padding: '20px', color: 'var(--text-secondary)' }}>
+                <strong style={{ fontSize: '18px', display: 'block', marginBottom: '8px' }}>Spectator Mode</strong>
+                <p style={{ fontSize: '12px' }}>Teams are currently answering this question.</p>
+              </div>
+            ) : gameState.gameState === 'OPEN_QUESTION_CLOSED' ? (
+              <div style={{ textAlign: 'center', padding: '20px', color: 'var(--text-secondary)' }}>
+                <strong style={{ fontSize: '16px', display: 'block', marginBottom: '8px', color: 'var(--pitch-accent)' }}>Submissions Closed</strong>
+                <p style={{ fontSize: '12px' }}>Time is up! Waiting for the referee to reveal the result.</p>
+              </div>
+            ) : !hasSubmittedOpen ? (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '15px', marginTop: '20px' }}>
                 <label style={{ fontSize: '12px', color: 'var(--text-secondary)', fontWeight: 'bold' }}>
                   SELECT YOUR OPTION
@@ -848,10 +884,7 @@ function PlayerView({ socket, playerId, nickname, setNickname, gameState, standi
                           fontSize: '14px',
                           textAlign: 'left',
                           cursor: 'pointer',
-                          transition: 'all 0.1s ease',
-                          display: 'flex',
-                          gap: '10px',
-                          alignItems: 'center'
+                          transition: 'all 0.2s'
                         }}
                       >
                         <span style={{ background: 'rgba(255,255,255,0.08)', width: '24px', height: '24px', borderRadius: '4px', display: 'flex', justifyContent: 'center', alignItems: 'center', color: '#00b0ff', fontWeight: '900' }}>

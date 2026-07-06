@@ -55,6 +55,7 @@ function OrganizerView({ socket, gameState, standings: rawStandings, roomId, roo
   const [correctPredictionReward, setCorrectPredictionReward] = useState(gameState.config.correctPredictionReward || 10);
   const [goldenGoalReward, setGoldenGoalReward] = useState(gameState.config.goldenGoalReward || 20);
   const [timerDuration, setTimerDuration] = useState(gameState.config.timerDuration);
+  const [mcqTimerDuration, setMcqTimerDuration] = useState(gameState.config.mcqTimerDuration ?? 20);
   const [revealStyle, setRevealStyle] = useState(gameState.config.revealStyle);
 
   // Token stats
@@ -71,7 +72,8 @@ function OrganizerView({ socket, gameState, standings: rawStandings, roomId, roo
         participationReward: parseInt(participationReward) || 0,
         correctPredictionReward: parseInt(correctPredictionReward) || 10,
         goldenGoalReward: parseInt(goldenGoalReward) || 20,
-        timerDuration: parseInt(timerDuration) || 0
+        timerDuration: parseInt(timerDuration) || 0,
+        mcqTimerDuration: parseInt(mcqTimerDuration) || 0
       }
     }, (res) => {
       setShowSettings(false);
@@ -849,11 +851,20 @@ function OrganizerView({ socket, gameState, standings: rawStandings, roomId, roo
                 {gameState.gameState === 'AUCTION_BIDDING' && renderBiddingSteward()}
                 {gameState.gameState === 'AUCTION_ANSWERING' && renderAnsweringSteward()}
 
-                {gameState.gameState === 'OPEN_QUESTION_ACTIVE' && (
+                {(gameState.gameState === 'OPEN_QUESTION_ACTIVE' || gameState.gameState === 'OPEN_QUESTION_CLOSED') && (
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'rgba(0, 176, 255, 0.05)', padding: '15px', borderRadius: '8px', border: '1px solid rgba(0, 176, 255, 0.2)' }}>
                     <div>
-                      <strong style={{ display: 'block', fontSize: '14px' }}>Open MCQ Round Active: {activeQuestion?.text}</strong>
-                      <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>Submissions: {gameState.submissionsCount} / {totalPlayers}</span>
+                      <strong style={{ display: 'block', fontSize: '14px' }}>
+                        Open MCQ Round {gameState.gameState === 'OPEN_QUESTION_CLOSED' ? 'Closed' : 'Active'}: {activeQuestion?.text}
+                      </strong>
+                      <div style={{ display: 'flex', gap: '15px', alignItems: 'center', marginTop: '5px' }}>
+                        <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>Submissions: {gameState.submissionsCount} / {totalPlayers}</span>
+                        {gameState.timerSecondsRemaining > 0 && (
+                          <span style={{ fontSize: '12px', background: 'rgba(255, 23, 68, 0.2)', padding: '2px 8px', borderRadius: '10px', color: 'var(--red-card)', fontWeight: 'bold' }}>
+                            ⏱️ {gameState.timerSecondsRemaining}s remaining
+                          </span>
+                        )}
+                      </div>
                     </div>
                     <button type="button" className="btn-primary" style={{ background: '#00b0ff', color: 'black' }} onClick={handleRevealOpenResults}>
                       Reveal Results
@@ -1708,12 +1719,16 @@ function OrganizerView({ socket, gameState, standings: rawStandings, roomId, roo
               🔧 Rules & Token Economy Config
             </h3>
 
+            <h4 style={{ fontSize: '14px', color: '#00e676', borderBottom: '1px solid var(--glass-border)', paddingBottom: '5px', marginBottom: '15px', marginTop: '10px' }}>General Settings</h4>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '15px', marginBottom: '25px' }}>
               <div>
                 <label style={{ fontSize: '12px', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px' }}>Starting Balance (Tokens)</label>
                 <input type="number" className="text-input" style={{ padding: '10px' }} value={startingTokens} onChange={(e) => setStartingTokens(e.target.value)} />
               </div>
+            </div>
 
+            <h4 style={{ fontSize: '14px', color: '#00e676', borderBottom: '1px solid var(--glass-border)', paddingBottom: '5px', marginBottom: '15px' }}>Prediction Game Rules</h4>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '15px', marginBottom: '25px' }}>
               <div>
                 <label style={{ fontSize: '12px', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px' }}>Participation Reward (Tokens per round)</label>
                 <input type="number" className="text-input" style={{ padding: '10px' }} value={participationReward} onChange={(e) => setParticipationReward(e.target.value)} />
@@ -1730,12 +1745,28 @@ function OrganizerView({ socket, gameState, standings: rawStandings, roomId, roo
               </div>
 
               <div>
-                <label style={{ fontSize: '12px', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px' }}>Round Timer Duration (Seconds)</label>
+                <label style={{ fontSize: '12px', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px' }}>Prediction Round Timer (Seconds)</label>
                 <select className="text-input" style={{ padding: '10px', background: 'var(--input-bg)', color: 'white' }} value={timerDuration} onChange={(e) => setTimerDuration(e.target.value)}>
                   <option value="0">Indefinite (Organizer whistle closes)</option>
                   <option value="30">30 Seconds</option>
                   <option value="60">60 Seconds</option>
                   <option value="90">90 Seconds</option>
+                </select>
+              </div>
+            </div>
+
+            <h4 style={{ fontSize: '14px', color: '#00b0ff', borderBottom: '1px solid var(--glass-border)', paddingBottom: '5px', marginBottom: '15px' }}>Auction & Recovery Game Rules</h4>
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '15px', marginBottom: '20px' }}>
+              <div>
+                <label style={{ fontSize: '12px', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px' }}>Recovery MCQ Timer (Seconds)</label>
+                <select className="text-input" style={{ padding: '10px', background: 'var(--input-bg)', color: 'white' }} value={mcqTimerDuration} onChange={(e) => setMcqTimerDuration(e.target.value)}>
+                  <option value="0">Indefinite (Organizer manual reveal)</option>
+                  <option value="15">15 Seconds</option>
+                  <option value="20">20 Seconds</option>
+                  <option value="30">30 Seconds</option>
+                  <option value="45">45 Seconds</option>
+                  <option value="60">60 Seconds</option>
                 </select>
               </div>
             </div>

@@ -365,6 +365,7 @@ function App() {
               gameState: res.gameState,
               currentQuestionId: res.currentQuestionId,
               activeQuestion: res.activeQuestion,
+              lastResults: res.lastResults || null,
               submissionsCount: res.submissionsCount,
               config: res.config,
               timerSecondsRemaining: res.timerSecondsRemaining,
@@ -471,7 +472,7 @@ function App() {
     socket.on('results-revealed', (results) => {
       setGameState(prev => ({
         ...prev,
-        gameState: 'REVEALED',
+        gameState: results.gameState || 'REVEALED',
         lastResults: results
       }));
       if (results.players && Array.isArray(results.players)) {

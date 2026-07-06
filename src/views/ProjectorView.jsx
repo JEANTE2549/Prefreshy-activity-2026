@@ -529,12 +529,22 @@ function ProjectorView({ socket, gameState, standings: rawStandings, roomId, roo
             )}
 
             {/* OPEN QUESTION ACTIVE STATE */}
-            {gameState.gameState === 'OPEN_QUESTION_ACTIVE' && (
+            {(gameState.gameState === 'OPEN_QUESTION_ACTIVE' || gameState.gameState === 'OPEN_QUESTION_CLOSED') && (
               <div className="glass-panel" style={{ flex: 1, padding: '35px', display: 'flex', flexDirection: 'column' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '25px', borderBottom: '1px solid var(--glass-border)', paddingBottom: '15px' }}>
                   <span style={{ fontSize: '14px', background: 'rgba(0, 176, 255, 0.15)', color: '#00b0ff', padding: '6px 15px', borderRadius: '25px', fontWeight: 'bold' }}>
                     📢 RECOVERY ROUND (ALL TEAMS SUBMIT)
                   </span>
+                  {gameState.timerSecondsRemaining > 0 && (
+                    <div style={{ background: 'rgba(255, 23, 68, 0.2)', border: '2px solid var(--red-glow)', color: 'var(--red-card)', padding: '6px 20px', borderRadius: '25px', fontWeight: '900', fontSize: '24px', letterSpacing: '2px' }}>
+                      ⏱️ {gameState.timerSecondsRemaining}s
+                    </div>
+                  )}
+                  {gameState.gameState === 'OPEN_QUESTION_CLOSED' && (
+                    <div style={{ background: 'rgba(255, 179, 0, 0.2)', border: '2px solid rgba(255, 179, 0, 0.5)', color: '#ffb300', padding: '6px 20px', borderRadius: '25px', fontWeight: '900', fontSize: '20px', letterSpacing: '1px' }}>
+                      TIME'S UP! WAITING FOR REVEAL
+                    </div>
+                  )}
                 </div>
 
                 <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
@@ -550,6 +560,12 @@ function ProjectorView({ socket, gameState, standings: rawStandings, roomId, roo
                         </div>
                       );
                     })}
+                  </div>
+                </div>
+
+                <div style={{ marginTop: '20px', display: 'flex', justifyContent: 'center', gap: '15px' }}>
+                  <div style={{ padding: '10px 20px', background: 'var(--pitch-green-light)', borderRadius: '8px', fontSize: '16px' }}>
+                    Submissions Received: <strong>{gameState.submissionsCount} / {standings.length}</strong>
                   </div>
                 </div>
 
