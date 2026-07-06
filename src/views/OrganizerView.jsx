@@ -49,7 +49,6 @@ function OrganizerView({ socket, gameState, standings: rawStandings, roomId, roo
   const [manualNo, setManualNo] = useState('');
   const [showOfflineInput, setShowOfflineInput] = useState(false);
 
-  // Local settings copy
   const [startingTokens, setStartingTokens] = useState(gameState.config.startingTokens);
   const [participationReward, setParticipationReward] = useState(gameState.config.participationReward);
   const [correctPredictionReward, setCorrectPredictionReward] = useState(gameState.config.correctPredictionReward || 10);
@@ -57,6 +56,19 @@ function OrganizerView({ socket, gameState, standings: rawStandings, roomId, roo
   const [timerDuration, setTimerDuration] = useState(gameState.config.timerDuration);
   const [mcqTimerDuration, setMcqTimerDuration] = useState(gameState.config.mcqTimerDuration ?? 20);
   const [revealStyle, setRevealStyle] = useState(gameState.config.revealStyle);
+
+  // Sync settings when modal opens or config updates from server
+  useEffect(() => {
+    if (showSettings && gameState.config) {
+      setStartingTokens(gameState.config.startingTokens);
+      setParticipationReward(gameState.config.participationReward);
+      setCorrectPredictionReward(gameState.config.correctPredictionReward || 10);
+      setGoldenGoalReward(gameState.config.goldenGoalReward || 20);
+      setTimerDuration(gameState.config.timerDuration);
+      setMcqTimerDuration(gameState.config.mcqTimerDuration ?? 20);
+      setRevealStyle(gameState.config.revealStyle);
+    }
+  }, [showSettings, gameState.config]);
 
   // Token stats
   const totalPlayers = standings.length;
@@ -67,18 +79,22 @@ function OrganizerView({ socket, gameState, standings: rawStandings, roomId, roo
   const saveConfig = () => {
     socket.emit('admin-update-config', {
       roomId,
+      adminToken,
       config: {
-        startingTokens: parseInt(startingTokens) || 100,
-        participationReward: parseInt(participationReward) || 0,
-        correctPredictionReward: parseInt(correctPredictionReward) || 10,
-        goldenGoalReward: parseInt(goldenGoalReward) || 20,
-        timerDuration: parseInt(timerDuration) || 0,
-        mcqTimerDuration: parseInt(mcqTimerDuration) || 0
+        startingTokens: Number(startingTokens) || 0,
+        participationReward: Number(participationReward) || 0,
+        correctPredictionReward: Number(correctPredictionReward) || 0,
+        goldenGoalReward: Number(goldenGoalReward) || 0,
+        timerDuration: timerDuration !== undefined ? Number(timerDuration) : 0,
+        mcqTimerDuration: mcqTimerDuration !== undefined ? Number(mcqTimerDuration) : 0,
+        revealStyle
       }
     }, (res) => {
+      if (res && !res.success) {
+        alert("Failed to save rules: " + res.error);
+      }
       setShowSettings(false);
     });
-    setShowSettings(false);
   };
 
   // Convert File Input to Base64
@@ -1746,7 +1762,7 @@ function OrganizerView({ socket, gameState, standings: rawStandings, roomId, roo
 
               <div>
                 <label style={{ fontSize: '12px', color: 'var(--text-secondary)', display: 'block', marginBottom: '4px' }}>Prediction Round Timer (Seconds)</label>
-                <select className="text-input" style={{ padding: '10px', background: 'var(--input-bg)', color: 'white' }} value={timerDuration} onChange={(e) => setTimerDuration(e.target.value)}>
+                <select className="text-input" style={{ padding: '10px', background: 'var(--input-bg)', color: 'white' }} value={String(timerDuration || '0')} onChange={(e) => setTimerDuration(e.target.value)}>
                   <option value="0">Indefinite (Organizer whistle closes)</option>
                   <option value="30">30 Seconds</option>
                   <option value="60">60 Seconds</option>

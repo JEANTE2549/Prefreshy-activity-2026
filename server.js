@@ -324,14 +324,15 @@ async function initDb() {
         pin: r.pin,
         gameState: r.gameState || 'LOBBY',
         currentQuestionId: r.currentQuestionId || null,
-        config: r.config || {
+        config: {
           startingTokens: 100,
           participationReward: 2,
           correctPredictionReward: 10,
           goldenGoalReward: 20,
           timerDuration: 0,
           mcqTimerDuration: 20,
-          revealStyle: "VAR"
+          revealStyle: "VAR",
+          ...(r.config || {})
         },
         questions: r.questions || [],
         players: r.players || {},
@@ -351,6 +352,15 @@ async function initDb() {
           "C": { id: "C", name: "Team C", playerIds: [], tokens: 0, itemsWon: [], bidderId: null }
         }
       };
+
+      // Sanitize empty team tokens that might have been saved as 100 in the past
+      if (roomsState[roomId].groups) {
+        Object.values(roomsState[roomId].groups).forEach(g => {
+          if (g.playerIds.length === 0) {
+            g.tokens = 0;
+          }
+        });
+      }
     });
 
     console.log('Database state loaded successfully.');
@@ -372,6 +382,16 @@ async function saveDbToSupabase() {
 
     Object.keys(roomsState).forEach(roomId => {
       const r = roomsState[roomId];
+      
+      // Sync player token balances back to their global accounts
+      if (r.players) {
+        Object.keys(r.players).forEach(pId => {
+          if (data.accounts[pId.toLowerCase()]) {
+            data.accounts[pId.toLowerCase()].fanTokens = r.players[pId].fanTokens;
+          }
+        });
+      }
+
       data.rooms[roomId] = {
         id: r.id,
         name: r.name,
@@ -417,46 +437,12 @@ function syncDb() {
 }
 
 // Helpers
-function syncAuctionPlayers() {
-  const predictionRoom = roomsState.prediction;
-  const auctionRoom = roomsState.auction;
-  if (!predictionRoom || !auctionRoom || !predictionRoom.players || !auctionRoom.players) return;
-
-  Object.keys(predictionRoom.players).forEach(pId => {
-    const predPlayer = predictionRoom.players[pId];
-    if (!predPlayer) return;
-
-    if (!auctionRoom.players[pId]) {
-      auctionRoom.players[pId] = {
-        id: predPlayer.id,
-        name: predPlayer.name,
-        fanTokens: predPlayer.fanTokens,
-        prevRank: predPlayer.currentRank || 1,
-        currentRank: predPlayer.currentRank || 1,
-        currentStreak: 0,
-        bestStreak: 0,
-        matchesPlayed: 0,
-        goals: 0,
-        misses: 0,
-        goldenGoalAvailable: true,
-        silverGoalAvailable: true,
-        history: []
-      };
-    } else if (auctionRoom.gameState === 'LOBBY') {
-      // Sync token changes from prediction if auction hasn't started yet
-      auctionRoom.players[pId].fanTokens = predPlayer.fanTokens;
-    }
-  });
-}
 
 function getRoomByPin(pin) {
   return Object.values(roomsState).find(r => r.pin === pin) || null;
 }
 
 function getRoomById(id) {
-  if (id === 'auction') {
-    syncAuctionPlayers();
-  }
   return roomsState[id] || null;
 }
 
@@ -819,24 +805,19 @@ io.on('connection', (socket) => {
       return callback?.({ success: false, error: 'This nickname is already taken in this room!' });
     }
 
+    // Initialize account fanTokens if it doesn't exist yet
+    if (account.fanTokens === undefined) {
+      account.fanTokens = room.config.startingTokens !== undefined ? room.config.startingTokens : 100;
+      syncDb(); // Save the new balance
+    }
+
     let player = room.players[id];
 
     if (!player) {
-      let startingTokens = room.config.startingTokens !== undefined ? room.config.startingTokens : 100;
-
-      // Carry over tokens from prediction to auction automatically
-      if (roomId === 'auction') {
-        const predictionRoom = getRoomById('prediction');
-        if (predictionRoom && predictionRoom.players[id]) {
-          startingTokens = predictionRoom.players[id].fanTokens;
-          console.log(`Carrying over ${startingTokens} tokens for user ${id} from prediction to auction.`);
-        }
-      }
-
       player = {
         id,
         name: trimmedName,
-        fanTokens: startingTokens,
+        fanTokens: account.fanTokens,
         prevRank: 1,
         currentRank: 1,
         currentStreak: 0,
@@ -851,6 +832,7 @@ io.on('connection', (socket) => {
       room.players[id] = player;
     } else {
       player.name = name.trim();
+      player.fanTokens = account.fanTokens; // Ensure they always get their persistent account balance
       if (player.silverGoalAvailable === undefined) {
         player.silverGoalAvailable = true;
       }
@@ -2129,7 +2111,7 @@ io.on('connection', (socket) => {
           g.bidderId = g.playerIds[0];
         }
       } else {
-        g.tokens = 100;
+        g.tokens = 0;
         g.bidderId = null;
       }
     });
@@ -2175,7 +2157,7 @@ io.on('connection', (socket) => {
         // Auto-assign first member as team captain/bidder
         g.bidderId = g.playerIds[0];
       } else {
-        g.tokens = 100;
+        g.tokens = 0;
         g.bidderId = null;
       }
     });
@@ -2226,7 +2208,7 @@ io.on('connection', (socket) => {
           g.bidderId = g.playerIds[0];
         }
       } else {
-        g.tokens = 100;
+        g.tokens = 0;
         g.bidderId = null;
       }
     });
