@@ -27,9 +27,9 @@ function ProjectorView({ socket, gameState, standings: rawStandings, roomId, roo
   const standings = Array.isArray(rawStandings) ? rawStandings : [];
   const [joinUrl, setJoinUrl] = useState('');
   
-  // Calculate Join URL based on browser location
+  // Calculate Join URL based on browser location (direct players to root for login)
   useEffect(() => {
-    const url = window.location.origin + window.location.pathname;
+    const url = window.location.origin;
     setJoinUrl(url);
   }, []);
 
