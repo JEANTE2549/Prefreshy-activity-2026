@@ -27,11 +27,11 @@ function ProjectorView({ socket, gameState, standings: rawStandings, roomId, roo
   const standings = Array.isArray(rawStandings) ? rawStandings : [];
   const [joinUrl, setJoinUrl] = useState('');
   
-  // Calculate Join URL based on browser location (direct players to root for login)
+  // Calculate Join URL based on browser location
   useEffect(() => {
-    const url = window.location.origin;
+    const url = window.location.origin + '/play/' + roomId;
     setJoinUrl(url);
-  }, []);
+  }, [roomId]);
 
   // Filter out players who haven't completed any rounds from the main League Table
   const activeStandings = [...standings]
@@ -122,6 +122,7 @@ function ProjectorView({ socket, gameState, standings: rawStandings, roomId, roo
                 {(group.itemsWon || []).map((itm, idx) => {
                   const isOpened = itm.startsWith('OPENED:');
                   const val = isOpened ? itm.split(':')[1] : null;
+                  const isPositive = val && (val.startsWith('+') || val === 'double token' || val.startsWith('ตามใจ'));
                   return (
                     <div
                       key={idx}
@@ -133,8 +134,8 @@ function ProjectorView({ socket, gameState, standings: rawStandings, roomId, roo
                       style={{
                         padding: '8px 12px',
                         borderRadius: '8px',
-                        background: isOpened ? (val.startsWith('+') ? 'rgba(0,230,118,0.1)' : 'rgba(255,23,68,0.1)') : 'rgba(255,215,0,0.05)',
-                        border: isOpened ? (val.startsWith('+') ? '1px solid var(--pitch-accent)' : '1px solid var(--red-card)') : '1px solid var(--gold-trophy)',
+                        background: isOpened ? (isPositive ? 'rgba(0,230,118,0.1)' : 'rgba(255,23,68,0.1)') : 'rgba(255,215,0,0.05)',
+                        border: isOpened ? (isPositive ? '1px solid var(--pitch-accent)' : '1px solid var(--red-card)') : '1px solid var(--gold-trophy)',
                         display: 'flex',
                         flexDirection: 'column',
                         alignItems: 'center',
@@ -146,7 +147,7 @@ function ProjectorView({ socket, gameState, standings: rawStandings, roomId, roo
                       title={(adminMode && !isOpened) ? "Click to open mystery box" : undefined}
                     >
                       {isOpened ? (
-                        <strong style={{ fontSize: '15px', color: val.startsWith('+') ? 'var(--pitch-accent)' : 'var(--red-card)' }}>
+                        <strong style={{ fontSize: '15px', color: isPositive ? 'var(--pitch-accent)' : 'var(--red-card)' }}>
                           {val}
                         </strong>
                       ) : (

@@ -655,7 +655,7 @@ function PlayerView({ socket, playerId, nickname, setNickname, gameState, standi
 
     const handlePlaceBid = () => {
       if (!myGroupId) return alert("You are not assigned to a team yet. Ask the Organizer!");
-      socket.emit('submit-bid', { roomId, teamId: myGroupId, playerId }, (res) => {
+      socket.emit('submit-bid', { roomId, teamId: myGroupId, playerId, expectedBid: currentPrice }, (res) => {
         if (!res.success) {
           alert(res.error);
         }

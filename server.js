@@ -1871,7 +1871,15 @@ io.on('connection', (socket) => {
 
       const isCorrect = sub && sub.answer === question.correctAnswer;
       const earned = isCorrect ? 50 : 10;
-      player.fanTokens += earned;
+        
+      // If player is in a team (Auction Game), tokens go to Team Balance
+      const team = room.groups && Object.values(room.groups).find(g => g.playerIds.includes(id));
+      if (team) {
+        team.tokens += earned;
+      } else {
+        player.fanTokens += earned;
+      }
+
       player.matchesPlayed++;
 
       player.history.push({
@@ -1907,6 +1915,7 @@ io.on('connection', (socket) => {
     io.to(roomId).emit('results-revealed', room.lastResults);
 
     io.to(roomId).emit('open-questions-update', room.openQuestions);
+    io.to(roomId).emit('groups-update', room.groups);
     callback?.({ success: true });
   });
 
@@ -2258,7 +2267,7 @@ io.on('connection', (socket) => {
   });
 
   // Submit Bid increment (+5 tokens)
-  socket.on('submit-bid', ({ roomId, teamId, playerId }, callback) => {
+  socket.on('submit-bid', ({ roomId, teamId, playerId, expectedBid }, callback) => {
     if (!teamId) return callback?.({ success: false, error: 'You are not assigned to a team.' });
 
     const room = getRoomById(roomId);
@@ -2266,6 +2275,11 @@ io.on('connection', (socket) => {
 
     if (room.gameState !== 'AUCTION_BIDDING') {
       return callback?.({ success: false, error: 'Bidding is not active.' });
+    }
+
+    // Optimistic concurrency control to prevent lost updates
+    if (expectedBid !== undefined && room.currentBid !== expectedBid) {
+      return callback?.({ success: false, error: 'Bid was already increased by another team! Please try again.' });
     }
 
     const team = room.groups && room.groups[teamId];
@@ -2449,8 +2463,17 @@ io.on('connection', (socket) => {
     const item = team.itemsWon[itemIdx];
     if (!item) return callback?.({ success: false, error: 'Item not found.' });
 
-    const modifier = parseInt(item) || 0;
-    team.tokens += modifier;
+    if (item === 'double token') {
+      team.tokens = team.tokens * 2;
+    } else if (item === 'halve token') {
+      team.tokens = Math.floor(team.tokens / 2);
+    } else if (item === 'ตามใจ TA' || item === 'ตามใจน้องๆ') {
+      // custom item, no token change
+    } else {
+      const modifier = parseInt(item) || 0;
+      team.tokens += modifier;
+    }
+
     team.itemsWon[itemIdx] = `OPENED:${item}`;
     syncDb();
 
